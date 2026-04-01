@@ -1,0 +1,39 @@
+name: Build npkm-go for Windows
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'npkm-go/**'
+      - '.gitea/workflows/windows.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'npkm-go/**'
+      - '.gitea/workflows/windows.yml'
+
+jobs:
+  build-windows:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          # Alternatively you can use stable or a specific version like '1.26'
+
+      - name: Build Windows Executable
+        run: |
+          cd npkm-go
+          GOOS=windows GOARCH=amd64 go build -o npkm.exe main.go
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: npkm-windows-amd64
+          path: npkm-go/npkm.exe
