@@ -37,4 +37,4 @@ jobs:
         with:
           name: npkm-windows-amd64
           path: npkm-go/npkm.exe
-# test gitea runner URL
+# test gitea runner URL (registration fixed)
