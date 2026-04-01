@@ -1,0 +1,97 @@
+#!/usr/bin/env coni
+(require "libs/os/src/io.coni" :as io)
+(require "libs/os/src/shell.coni" :as shell)
+(require "libs/cli/src/cli.coni" :as cli)
+(require "libs/str/src/str.coni" :as str)
+
+(defrecord Task [name shell file debug copy remove fail unzip git move])
+
+(defn execute-shell [spec]
+  (let [cmd (:cmd spec)
+        res (shell/sh cmd)]
+    (if (= (:code res) 0)
+      nil
+      (throw (str "Exit code " (:code res) " : " (:stderr res))))))
+
+(defn execute-file [spec]
+  (let [state (:state spec)
+        path (:path spec)]
+    (if (= state "directory")
+      (io/make-dir path)
+      (if (= state "touch")
+        (io/write-file path "")
+        (if (= state "absent")
+          (io/delete-file path)
+          (throw (str "Unknown state " state)))))))
+
+(defn execute-debug [spec]
+  (println "  msg:" (:msg spec)))
+
+(defn execute-copy [spec]
+  (io/copy (:src spec) (:dest spec)))
+
+(defn execute-remove [spec]
+  (io/delete-file (:path spec)))
+
+(defn execute-fail [spec]
+  (throw (:msg spec)))
+
+(defn execute-unzip [spec]
+  (let [cmd (str "unzip -q -o " (:src spec) " -d " (:dest spec))
+        res (shell/sh cmd)]
+    (if (= (:code res) 0)
+      nil
+      (throw (str "Exit code " (:code res) " : " (:stderr res))))))
+
+(defn execute-git [spec]
+  (println "git not impl natively in shell scripts yet"))
+
+(defn execute-move [spec]
+  (let [cmd (str "mv " (:src spec) " " (:dest spec))
+        res (shell/sh cmd)]
+    (if (= (:code res) 0)
+      nil
+      (throw (str "Exit code " (:code res) " : " (:stderr res))))))
+
+(defn run-task [raw-task]
+  (let [t (Task (:name raw-task)
+                (:shell raw-task)
+                (:file raw-task)
+                (:debug raw-task)
+                (:copy raw-task)
+                (:remove raw-task)
+                (:fail raw-task)
+                (:unzip raw-task)
+                (:git raw-task)
+                (:move raw-task))]
+    (println "TASK [" (:name t) "]")
+    (cond
+      (:shell t)  (execute-shell (:shell t))
+      (:file t)   (execute-file (:file t))
+      (:debug t)  (execute-debug (:debug t))
+      (:copy t)   (execute-copy (:copy t))
+      (:remove t) (execute-remove (:remove t))
+      (:fail t)   (execute-fail (:fail t))
+      (:unzip t)  (execute-unzip (:unzip t))
+      (:git t)    (execute-git (:git t))
+      (:move t)   (execute-move (:move t))
+      :else       (println "warning: unknown or missing module type"))
+    (println "  changed\n")))
+
+(defn run []
+  (let [args (cli/args)]
+    (if (empty? args)
+      (do
+        (println "Usage: npkm <playbook.edn>")
+        (sys-exit 1))
+      (let [playbook-file (first args)
+            content (io/read-file playbook-file)
+            tasks (read-string content)]
+        (loop [rem tasks]
+          (if (empty? rem)
+            (println "Playbook finished natively in Coni!")
+            (do
+              (run-task (first rem))
+              (recur (rest rem)))))))))
+
+(run)

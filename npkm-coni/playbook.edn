@@ -1,0 +1,12 @@
+[{:name "Check if it works"
+  :debug {:msg "Testing unzip and move!"}}
+ {:name "Create directory natively"
+  :file {:path "tmp/coni_test_unzip" :state "directory"}}
+ {:name "Download zip via shell"
+  :shell {:cmd "curl -sL https://github.com/torvalds/test-tlb/archive/refs/heads/master.zip -o tmp/coni_test_unzip/test.zip"}}
+ {:name "Unzip the payload"
+  :unzip {:src "tmp/coni_test_unzip/test.zip" :dest "tmp/coni_test_unzip/extracted_zip"}}
+ {:name "Move output"
+  :move {:src "tmp/coni_test_unzip/extracted_zip" :dest "tmp/coni_test_unzip/moved_extracted_zip"}}
+ {:name "Cleanup"
+  :remove {:path "tmp/coni_test_unzip"}}]
