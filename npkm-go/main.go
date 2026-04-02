@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"time"
 
@@ -36,6 +37,8 @@ type Task struct {
 	Replace    *Replace    `yaml:"replace,omitempty"`
 	Fail       *Fail       `yaml:"fail,omitempty"`
 	Unzip      *Unzip      `yaml:"unzip,omitempty"`
+	Move       *Move       `yaml:"move,omitempty"`
+	Path       *PathTask   `yaml:"path,omitempty"`
 }
 
 type GetUrl struct {
@@ -46,6 +49,15 @@ type GetUrl struct {
 type Copy struct {
 	Src  string `yaml:"src"`
 	Dest string `yaml:"dest"`
+}
+
+type Move struct {
+	Src  string `yaml:"src"`
+	Dest string `yaml:"dest"`
+}
+
+type PathTask struct {
+	Path string `yaml:"path"`
 }
 
 type LineInFile struct {
@@ -203,9 +215,13 @@ func main() {
 		} else if task.Replace != nil {
 			err = executeReplace(task.Replace)
 		} else if task.Fail != nil {
-			err = fmt.Errorf(task.Fail.Msg)
+			err = fmt.Errorf("%s", task.Fail.Msg)
 		} else if task.Unzip != nil {
 			err = executeUnzip(task.Unzip)
+		} else if task.Move != nil {
+			err = executeMove(task.Move)
+		} else if task.Path != nil {
+			err = executePath(task.Path)
 		} else {
 			fmt.Println("  warning: unknown or missing module type")
 			continue
@@ -475,5 +491,111 @@ func executeUnzip(spec *Unzip) error {
 			return err
 		}
 	}
+	return nil
+}
+
+func executeMove(spec *Move) error {
+	if err := os.MkdirAll(filepath.Dir(spec.Dest), 0755); err != nil {
+		return err
+	}
+	
+	err := os.Rename(spec.Src, spec.Dest)
+	if err == nil {
+		return nil
+	}
+
+	// Fallback for cross-device link errors
+	in, err := os.Open(spec.Src)
+	if err != nil {
+		return err
+	}
+	out, err := os.Create(spec.Dest)
+	if err != nil {
+		in.Close()
+		return err
+	}
+	_, err = io.Copy(out, in)
+	in.Close()
+	out.Close()
+	
+	if err != nil {
+		return err
+	}
+	
+	return os.RemoveAll(spec.Src)
+}
+
+func executePath(spec *PathTask) error {
+	newPath := spec.Path
+
+	if runtime.GOOS == "windows" {
+		// Option 1: Try PowerShell (often available, safe string handling)
+		psCmd := fmt.Sprintf(`$oldPath = [Environment]::GetEnvironmentVariable('Path', 'User'); if (($oldPath -split ';') -notcontains '%s') { [Environment]::SetEnvironmentVariable('Path', $oldPath + ';%s', 'User') }`, newPath, newPath)
+		if err := exec.Command("powershell", "-NoProfile", "-Command", psCmd).Run(); err == nil {
+			return nil
+		}
+
+		// Option 2: Fallback to reg.exe (built-in Windows utility, available even without PowerShell)
+		out, err := exec.Command("reg", "query", `HKCU\Environment`, "/v", "PATH").Output()
+		if err == nil {
+			outStr := string(out)
+			if !strings.Contains(outStr, newPath) {
+				var currentPath string
+				lines := strings.Split(outStr, "\n")
+				for _, line := range lines {
+					if strings.Contains(line, "PATH") && (strings.Contains(line, "REG_SZ") || strings.Contains(line, "REG_EXPAND_SZ")) {
+						parts := strings.Fields(line)
+						if len(parts) >= 3 {
+							idx := strings.Index(line, parts[1]) + len(parts[1])
+							currentPath = strings.TrimSpace(line[idx:])
+						}
+					}
+				}
+				newFullPath := newPath
+				if currentPath != "" {
+					newFullPath = currentPath + ";" + newPath
+				}
+				if errAdd := exec.Command("reg", "add", `HKCU\Environment`, "/v", "PATH", "/t", "REG_EXPAND_SZ", "/d", newFullPath, "/f").Run(); errAdd == nil {
+					return nil
+				}
+			} else {
+				return nil // Already in path
+			}
+		}
+
+		return fmt.Errorf("failed to update Windows PATH using both PowerShell and reg.exe")
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+
+	exportLine := fmt.Sprintf(`export PATH="%s:$PATH"`, newPath)
+	filesToUpdate := []string{".bashrc", ".zshrc", ".profile", ".bash_profile"}
+	
+	updated := false
+	for _, file := range filesToUpdate {
+		rcPath := filepath.Join(home, file)
+		if _, err := os.Stat(rcPath); err == nil {
+			content, err := os.ReadFile(rcPath)
+			if err == nil && !strings.Contains(string(content), exportLine) {
+				f, err := os.OpenFile(rcPath, os.O_APPEND|os.O_WRONLY, 0644)
+				if err == nil {
+					f.WriteString("\n" + exportLine + "\n")
+					f.Close()
+					updated = true
+				}
+			}
+		}
+	}
+
+	if !updated {
+		rcPath := filepath.Join(home, ".bashrc")
+		if _, err := os.Stat(rcPath); os.IsNotExist(err) {
+			os.WriteFile(rcPath, []byte(exportLine+"\n"), 0644)
+		}
+	}
+	
 	return nil
 }

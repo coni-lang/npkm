@@ -1,0 +1,74 @@
+tasks:
+  - name: Execute a basic debug message
+    debug:
+      msg: "Starting playback of all tasks"
+
+  - name: Clone a repository natively using git
+    git:
+      repo: "https://gitea.com/gitea/go-sdk.git"
+      dest: "tmp/sample-repo"
+
+  - name: Execute a standard system command
+    command:
+      cmd: "git status"
+      cwd: "tmp/sample-repo"
+
+  - name: Execute a shell command supporting redirects
+    shell:
+      cmd: "echo 'Hello from shell' > shell_output.txt"
+      cwd: "tmp"
+
+  - name: Download a file over HTTP
+    get_url:
+      url: "https://raw.githubusercontent.com/torvalds/linux/master/README"
+      dest: "tmp/linux_readme.txt"
+
+  - name: Ensure a specific line exists in a file
+    lineinfile:
+      path: "tmp/linux_readme.txt"
+      line: "# appended via npkm-go"
+
+  - name: Search and replace inside a file
+    replace:
+      path: "tmp/linux_readme.txt"
+      regexp: "Linux"
+      replace: "GNU/Linux"
+
+  - name: Create a new directory via file state
+    file:
+      path: "tmp/my_dir"
+      state: "directory"
+
+  - name: Copy a file locally
+    copy:
+      src: "tmp/linux_readme.txt"
+      dest: "tmp/my_dir/readme_copy.txt"
+
+  - name: Unzip an archive
+    # Ensure you have a zip to test or download one with get_url
+    unzip:
+      src: "archive.zip"
+      dest: "tmp/extracted_zip"
+
+  - name: Rename / move a file explicitly
+    move:
+      src: "tmp/my_dir/readme_copy.txt"
+      dest: "tmp/my_dir/readme_moved.txt"
+
+  - name: Update the system user PATH securely
+    path:
+      path: "/opt/npkm-go/bin"
+
+  - name: Manage a systemd service (commented to prevent issues)
+    # systemd:
+    #   name: "nginx"
+    #   state: "restarted"
+    #   enabled: true
+
+  - name: Remove a file or directory tree entirely
+    remove:
+      path: "tmp/sample-repo"
+
+  - name: Forcefully fail the playbook (commented to run the rest)
+    # fail:
+    #   msg: "Forced failure demonstration"
