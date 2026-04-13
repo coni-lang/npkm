@@ -1,0 +1,2 @@
+{:compiler {:git "git@bitbucket.org:hellonico/coni-lang.git" :branch "main"}
+ :dependencies {"libs" {:git "git@bitbucket.org:hellonico/coni-lang.git/libs" :branch "main"}}}

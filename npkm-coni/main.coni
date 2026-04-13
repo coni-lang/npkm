@@ -84,14 +84,18 @@
       (do
         (println "Usage: npkm <playbook.edn>")
         (sys-exit 1))
-      (let [playbook-file (first args)
-            content (io/read-file playbook-file)
-            tasks (read-string content)]
-        (loop [rem tasks]
-          (if (empty? rem)
-            (println "Playbook finished natively in Coni!")
-            (do
-              (run-task (first rem))
-              (recur (rest rem)))))))))
+      (let [playbook-file (first args)]
+        (if (not (io/file-exists? playbook-file))
+          (do
+            (println "Error: Playbook file not found:" playbook-file)
+            (sys-exit 1))
+          (let [content (io/read-file playbook-file)
+                tasks (read-string content)]
+            (loop [rem tasks]
+              (if (empty? rem)
+                (println "Playbook finished natively in Coni!")
+                (do
+                  (run-task (first rem))
+                  (recur (rest rem)))))))))))
 
 (run)
