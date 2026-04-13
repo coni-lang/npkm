@@ -3,6 +3,7 @@ package main
 import (
 	"archive/zip"
 	"crypto/tls"
+	"flag"
 	"fmt"
 	"io"
 	"net/http"
@@ -17,6 +18,8 @@ import (
 	"github.com/go-git/go-git/v5"
 	"gopkg.in/yaml.v3"
 )
+
+var Version string = "development"
 
 type Playbook struct {
 	Tasks []Task `yaml:"tasks"`
@@ -39,6 +42,7 @@ type Task struct {
 	Unzip      *Unzip      `yaml:"unzip,omitempty"`
 	Move       *Move       `yaml:"move,omitempty"`
 	Path       *PathTask   `yaml:"path,omitempty"`
+	PowerShell *PowerShell `yaml:"powershell,omitempty"`
 }
 
 type GetUrl struct {
@@ -58,6 +62,13 @@ type Move struct {
 
 type PathTask struct {
 	Path string `yaml:"path"`
+}
+
+type PowerShell struct {
+	Inline string   `yaml:"inline,omitempty"`
+	File   string   `yaml:"file,omitempty"`
+	Params []string `yaml:"params,omitempty"`
+	Cwd    string   `yaml:"cwd,omitempty"`
 }
 
 type LineInFile struct {
@@ -118,14 +129,106 @@ type Unzip struct {
 }
 
 func main() {
-	if len(os.Args) < 2 {
-		fmt.Printf("Usage: %s <playbook.yml | http(s)://... | git repo>\n", os.Args[0])
+	var versionFlag bool
+	var helpFlag bool
+	flag.BoolVar(&versionFlag, "v", false, "prints version (compiled at date)")
+	flag.BoolVar(&helpFlag, "h", false, "shows help and supported tasks")
+	
+	flag.Usage = func() {
+		fmt.Printf("Usage: %s [options] <playbook.yml | directory | http(s)://... | git repo>\n\n", os.Args[0])
+		fmt.Println("Options:")
+		flag.PrintDefaults()
+		fmt.Println("\nSupported Playbook Tasks:")
+		fmt.Println("  get_url:      Download a file from HTTP/HTTPS.")
+		fmt.Println("                { url: string, dest: string }")
+		fmt.Println("  copy:         Copy a file from local source to destination.")
+		fmt.Println("                { src: string, dest: string }")
+		fmt.Println("  lineinfile:   Ensure a particular line is in a file, or replace an existing line using a regular expression.")
+		fmt.Println("                { path: string, regexp?: string, line: string }")
+		fmt.Println("  command:      Execute a command without going through a shell.")
+		fmt.Println("                { cmd: string, cwd?: string }")
+		fmt.Println("  shell:        Execute a command through the system shell.")
+		fmt.Println("                { cmd: string, cwd?: string }")
+		fmt.Println("  file:         Manage files, directories, and symlinks.")
+		fmt.Println("                { path: string, state: string, src?: string, mode?: int }")
+		fmt.Println("                states: directory, touch, link, absent")
+		fmt.Println("  systemd:      Manage systemd services.")
+		fmt.Println("                { name: string, state: string, enabled: bool }")
+		fmt.Println("                states: started, stopped, restarted")
+		fmt.Println("  git:          Clone or pull a git repository.")
+		fmt.Println("                { repo: string, dest: string }")
+		fmt.Println("  remove:       Remove a file or directory.")
+		fmt.Println("                { path: string }")
+		fmt.Println("  debug:        Print a message to the console.")
+		fmt.Println("                { msg: string }")
+		fmt.Println("  replace:      Replace all instances of a regular expression in a file.")
+		fmt.Println("                { path: string, regexp: string, replace: string }")
+		fmt.Println("  fail:         Fail the playbook execution with a message.")
+		fmt.Println("                { msg: string }")
+		fmt.Println("  unzip:        Extract a zip archive.")
+		fmt.Println("                { src: string, dest: string }")
+		fmt.Println("  move:         Move or rename a file or directory.")
+		fmt.Println("                { src: string, dest: string }")
+		fmt.Println("  path:         Add a directory to the system PATH environment variable.")
+		fmt.Println("                { path: string }")
+		fmt.Println("  powershell:   Execute a PowerShell script or inline command.")
+		fmt.Println("                { inline?: string, file?: string, params?: []string, cwd?: string }")
+		fmt.Println("\nExample Playbook:")
+		fmt.Println("  tasks:")
+		fmt.Println("    - name: Ensure target directory exists")
+		fmt.Println("      file:")
+		fmt.Println("        path: /tmp/myapp")
+		fmt.Println("        state: directory")
+	}
+
+	flag.Parse()
+
+	if versionFlag {
+		v := Version
+		if v == "development" {
+			if stat, err := os.Stat(os.Args[0]); err == nil {
+				v = fmt.Sprintf("development (compiled %s)", stat.ModTime().Format(time.RFC3339))
+			}
+		}
+		fmt.Printf("npkm version: %s\n", v)
+		os.Exit(0)
+	}
+
+	if helpFlag {
+		flag.Usage()
+		os.Exit(0)
+	}
+
+	args := flag.Args()
+	if len(args) < 1 {
+		flag.Usage()
 		os.Exit(1)
 	}
 
-	source := os.Args[1]
+	source := args[0]
 	var data []byte
 	var err error
+
+	if info, statErr := os.Stat(source); statErr == nil && info.IsDir() {
+		entries, err := os.ReadDir(source)
+		if err != nil {
+			fmt.Printf("Error reading directory: %v\n", err)
+			os.Exit(1)
+		}
+		
+		fmt.Printf("Available playbooks in %s:\n", source)
+		found := false
+		for _, entry := range entries {
+			if !entry.IsDir() && (strings.HasSuffix(entry.Name(), ".yml") || strings.HasSuffix(entry.Name(), ".yaml")) {
+				fmt.Printf("  - %s\n", entry.Name())
+				found = true
+			}
+		}
+		if !found {
+			fmt.Println("  (No .yml or .yaml files found)")
+		}
+		os.Exit(0)
+	}
 
 	isGit := strings.HasSuffix(source, ".git") || strings.HasPrefix(source, "git://") || strings.HasPrefix(source, "git@")
 	if isGit {
@@ -222,6 +325,8 @@ func main() {
 			err = executeMove(task.Move)
 		} else if task.Path != nil {
 			err = executePath(task.Path)
+		} else if task.PowerShell != nil {
+			err = executePowerShell(task.PowerShell)
 		} else {
 			fmt.Println("  warning: unknown or missing module type")
 			continue
@@ -598,4 +703,27 @@ func executePath(spec *PathTask) error {
 	}
 	
 	return nil
+}
+
+func executePowerShell(spec *PowerShell) error {
+	psBin := "powershell"
+	if runtime.GOOS != "windows" {
+		psBin = "pwsh"
+	}
+	
+	args := []string{"-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass"}
+	if spec.Inline != "" {
+		args = append(args, "-Command", spec.Inline)
+	} else if spec.File != "" {
+		args = append(args, "-File", spec.File)
+		args = append(args, spec.Params...)
+	} else {
+		return fmt.Errorf("powershell task requires either 'inline' or 'file'")
+	}
+
+	cmd := exec.Command(psBin, args...)
+	cmd.Dir = spec.Cwd
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
 }
