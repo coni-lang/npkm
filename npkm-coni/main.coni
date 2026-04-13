@@ -4,93 +4,323 @@
 (require "libs/cli/src/cli.coni" :as cli)
 (require "libs/str/src/str.coni" :as str)
 
-(defrecord Task [name shell file debug copy remove fail unzip git move])
+(defprotocol PlaybookTask
+  (execute [this]))
 
-(defn execute-shell [spec]
-  (let [cmd (:cmd spec)
-        res (shell/sh cmd)]
-    (if (= (:code res) 0)
+(defrecord ShellTask [spec]
+  PlaybookTask
+  (execute [this]
+    (let [cmd (:cmd (:spec this))
+          cwd (:cwd (:spec this))
+          real-cmd (if cwd (str "cd " cwd " && " cmd) cmd)
+          res (shell/sh real-cmd)]
+      (if (= (:code res) 0) nil (throw (str "Exit code " (:code res) " : " (:stderr res)))))))
+
+(defrecord CommandTask [spec]
+  PlaybookTask
+  (execute [this]
+    (execute (ShellTask (:spec this)))))
+
+(defrecord FileTask [spec]
+  PlaybookTask
+  (execute [this]
+    (let [s (:spec this)
+          state (:state s)
+          path (:path s)]
+      (if (= state "directory")
+        (io/make-dir path)
+        (if (= state "touch")
+          (io/write-file path "")
+          (if (= state "absent")
+            (io/delete-file path)
+            (if (= state "link")
+              (let [res (shell/sh (str "ln -s " (:src s) " " path))]
+                (if (= (:code res) 0) nil (throw (:stderr res))))
+              (throw (str "Unknown state " state)))))))))
+
+(defrecord DebugTask [spec]
+  PlaybookTask
+  (execute [this]
+    (println "  msg:" (:msg (:spec this)))))
+
+(defrecord CopyTask [spec]
+  PlaybookTask
+  (execute [this]
+    (let [s (:spec this)
+          res (shell/sh (str "cp -R " (:src s) " " (:dest s)))]
+      (if (= (:code res) 0) nil (throw (:stderr res))))))
+
+(defrecord RemoveTask [spec]
+  PlaybookTask
+  (execute [this]
+    (io/delete-file (:path (:spec this)))))
+
+(defrecord FailTask [spec]
+  PlaybookTask
+  (execute [this]
+    (throw (:msg (:spec this)))))
+
+(defrecord UnzipTask [spec]
+  PlaybookTask
+  (execute [this]
+    (let [s (:spec this)
+          cmd (str "unzip -q -o " (:src s) " -d " (:dest s))
+          res (shell/sh cmd)]
+      (if (= (:code res) 0) nil (throw (str "Exit code " (:code res) " : " (:stderr res)))))))
+
+(defrecord GitTask [spec]
+  PlaybookTask
+  (execute [this]
+    (let [s (:spec this)
+          repo (:repo s)
+          dest (:dest s)
+          cmd (str "git clone " repo " " dest)
+          res (shell/sh cmd)]
+      (if (= (:code res) 0)
+        nil
+        (let [cmd2 (str "cd " dest " && git pull origin main")
+              res2 (shell/sh cmd2)]
+          (if (= (:code res2) 0) nil (throw (:stderr res2))))))))
+
+(defrecord MoveTask [spec]
+  PlaybookTask
+  (execute [this]
+    (let [s (:spec this)
+          cmd (str "mv " (:src s) " " (:dest s))
+          res (shell/sh cmd)]
+      (if (= (:code res) 0) nil (throw (str "Exit code " (:code res) " : " (:stderr res)))))))
+
+(defrecord GetUrlTask [spec]
+  PlaybookTask
+  (execute [this]
+    (let [s (:spec this)
+          cmd (str "curl -sL " (:url s) " -o " (:dest s))
+          res (shell/sh cmd)]
+      (if (= (:code res) 0) nil (throw (str "Exit code " (:code res) " : " (:stderr res)))))))
+
+(defrecord LineInFileTask [spec]
+  PlaybookTask
+  (execute [this]
+    (let [s (:spec this)
+          cmd (str "echo \"" (:line s) "\" >> " (:path s))
+          res (shell/sh cmd)]
+      (if (= (:code res) 0) nil (throw (:stderr res))))))
+
+(defrecord ReplaceTask [spec]
+  PlaybookTask
+  (execute [this]
+    (let [s (:spec this)
+          cmd (str "sed -i.bak 's/" (:regexp s) "/" (:replace s) "/g' " (:path s))
+          res (shell/sh cmd)]
+      (if (= (:code res) 0) nil (throw (:stderr res))))))
+
+(defrecord SystemdTask [spec]
+  PlaybookTask
+  (execute [this]
+    (let [s (:spec this)
+          cmd (str "systemctl " (:state s) " " (:name s))
+          res (shell/sh cmd)]
+      (if (= (:code res) 0) nil (throw (:stderr res))))))
+
+(defrecord PathTask [spec]
+  PlaybookTask
+  (execute [this]
+    (let [s (:spec this)
+          cmd (str "echo 'export PATH=\"$PATH:" (:path s) "\"' >> ~/.bashrc")
+          res (shell/sh cmd)]
+      (if (= (:code res) 0) nil (throw (:stderr res))))))
+
+(defrecord PowershellTask [spec]
+  PlaybookTask
+  (execute [this]
+    (let [s (:spec this)
+          inline (:inline s)
+          f (:file s)
+          cmd (if inline (str "pwsh -Command \"" inline "\"") (str "pwsh -File " f))
+          res (shell/sh cmd)]
+      (if (= (:code res) 0) nil (throw (:stderr res))))))
+
+(defn yaml-to-edn [content]
+  (let [lines (str/split content "\n")]
+    (loop [rem lines
+           task-str ""
+           mod-str ""
+           acc "["]
+      (if (empty? rem)
+        (let [final-task (if (> (count mod-str) 0) (str task-str mod-str "}") task-str)
+              final-acc (if (> (count final-task) 0) (str acc "{" final-task "}]") (str acc "]"))]
+          final-acc)
+        (let [line (first rem)
+              trim-line (str/trim line)
+              is-comment (str/starts-with? trim-line "#")
+              is-empty (= trim-line "")]
+          (if (or is-comment is-empty (= trim-line "tasks:"))
+            (recur (rest rem) task-str mod-str acc)
+            (if (str/starts-with? trim-line "- name:")
+              (let [task-name (str/trim (str/substring trim-line 7 (count trim-line)))
+                    clean-name (if (str/starts-with? task-name "\"") (str/substring task-name 1 (- (count task-name) 1)) task-name)
+                    prev-task (if (> (count mod-str) 0) (str task-str mod-str "}") task-str)
+                    next-acc (if (> (count prev-task) 0) (str acc "{" prev-task "} ") acc)
+                    new-task-str (str ":name \"" clean-name "\" ")]
+                (recur (rest rem) new-task-str "" next-acc))
+              (if (and (> (count task-str) 0) (str/ends-with? trim-line ":"))
+                (let [mod-name (str/substring trim-line 0 (- (count trim-line) 1))
+                      prev-mod (if (> (count mod-str) 0) (str mod-str "} ") "")
+                      new-task-str (str task-str prev-mod)
+                      new-mod-str (str ":" mod-name " {")]
+                  (recur (rest rem) new-task-str new-mod-str acc))
+                (if (and (> (count task-str) 0) (> (count mod-str) 0) (str/includes? trim-line ":"))
+                  (let [colon-idx (str/index-of trim-line ":")
+                        k-str (str/trim (str/substring trim-line 0 colon-idx))
+                        v-str (str/trim (str/substring trim-line (+ colon-idx 1) (count trim-line)))
+                        v-clean (if (and (str/starts-with? v-str "\"") (str/ends-with? v-str "\""))
+                                  (str/substring v-str 1 (- (count v-str) 1))
+                                  v-str)
+                        v-val (if (or (= v-clean "true") (= v-clean "false")) v-clean (str "\"" v-clean "\""))
+                        new-mod-str (str mod-str ":" k-str " " v-val " ")]
+                    (recur (rest rem) task-str new-mod-str acc))
+                  (recur (rest rem) task-str mod-str acc))))))))))
+
+(defn parse-playbook [file content]
+  (if (or (str/ends-with? file ".yml") (str/ends-with? file ".yaml"))
+    (read-string (yaml-to-edn content))
+    (read-string content)))
+
+
+(defn format-date [path]
+  (let [os-res (shell/sh "uname -s")
+        os-name (str/trim (if (= (:code os-res) 0) (:stdout os-res) ""))
+        win? (= os-name "")]
+    (if win?
+      (str/trim (:stdout (shell/sh (str "powershell -Command \"(Get-Item '" path "').LastWriteTime.ToString('o')\""))))
+      (let [res (shell/sh (str "date -r \"" path "\" '+%Y-%m-%dT%H:%M:%S%z' 2>/dev/null || stat -c %y \"" path "\" 2>/dev/null"))]
+         (str/trim (:stdout res))))))
+
+(def playbook-task-registry
+  {:shell ShellTask
+   :command CommandTask
+   :file FileTask
+   :debug DebugTask
+   :copy CopyTask
+   :remove RemoveTask
+   :fail FailTask
+   :unzip UnzipTask
+   :git GitTask
+   :move MoveTask
+   :get_url GetUrlTask
+   :lineinfile LineInFileTask
+   :replace ReplaceTask
+   :systemd SystemdTask
+   :path PathTask
+   :powershell PowershellTask})
+
+(def playbook-task-keys
+  (keys playbook-task-registry))
+
+(defn get-task-match [raw]
+  (loop [rem playbook-task-keys]
+    (if (empty? rem)
       nil
-      (throw (str "Exit code " (:code res) " : " (:stderr res))))))
-
-(defn execute-file [spec]
-  (let [state (:state spec)
-        path (:path spec)]
-    (if (= state "directory")
-      (io/make-dir path)
-      (if (= state "touch")
-        (io/write-file path "")
-        (if (= state "absent")
-          (io/delete-file path)
-          (throw (str "Unknown state " state)))))))
-
-(defn execute-debug [spec]
-  (println "  msg:" (:msg spec)))
-
-(defn execute-copy [spec]
-  (io/copy (:src spec) (:dest spec)))
-
-(defn execute-remove [spec]
-  (io/delete-file (:path spec)))
-
-(defn execute-fail [spec]
-  (throw (:msg spec)))
-
-(defn execute-unzip [spec]
-  (let [cmd (str "unzip -q -o " (:src spec) " -d " (:dest spec))
-        res (shell/sh cmd)]
-    (if (= (:code res) 0)
-      nil
-      (throw (str "Exit code " (:code res) " : " (:stderr res))))))
-
-(defn execute-git [spec]
-  (println "git not impl natively in shell scripts yet"))
-
-(defn execute-move [spec]
-  (let [cmd (str "mv " (:src spec) " " (:dest spec))
-        res (shell/sh cmd)]
-    (if (= (:code res) 0)
-      nil
-      (throw (str "Exit code " (:code res) " : " (:stderr res))))))
+      (let [k (first rem)
+            v (get raw k)]
+        (if v
+          [k v]
+          (recur (rest rem)))))))
 
 (defn run-task [raw-task]
-  (let [t (Task (:name raw-task)
-                (:shell raw-task)
-                (:file raw-task)
-                (:debug raw-task)
-                (:copy raw-task)
-                (:remove raw-task)
-                (:fail raw-task)
-                (:unzip raw-task)
-                (:git raw-task)
-                (:move raw-task))]
-    (println "TASK [" (:name t) "]")
-    (cond
-      (:shell t)  (execute-shell (:shell t))
-      (:file t)   (execute-file (:file t))
-      (:debug t)  (execute-debug (:debug t))
-      (:copy t)   (execute-copy (:copy t))
-      (:remove t) (execute-remove (:remove t))
-      (:fail t)   (execute-fail (:fail t))
-      (:unzip t)  (execute-unzip (:unzip t))
-      (:git t)    (execute-git (:git t))
-      (:move t)   (execute-move (:move t))
-      :else       (println "warning: unknown or missing module type"))
-    (println "  changed\n")))
+  (println "TASK [" (:name raw-task) "]")
+  (let [match (get-task-match raw-task)]
+    (if match
+      (let [k (first match)
+            v (second match)
+            constructor (get playbook-task-registry k)]
+        (execute (constructor v)))
+      (println "warning: unknown or missing module type")))
+  (println "  changed\n"))
 
 (defn run []
-  (let [args (cli/args)]
-    (if (empty? args)
+  (let [args (cli/args)
+        flags (filter (fn [x] (str/starts-with? x "-")) args)
+        pos-args (filter (fn [x] (not (str/starts-with? x "-"))) args)]
+    (if (some (fn [x] (or (= x "-v") (= x "-V") (= x "--version"))) flags)
       (do
-        (println "Usage: npkm <playbook.edn>")
-        (sys-exit 1))
-      (let [playbook-file (first args)]
-        (if (not (io/file-exists? playbook-file))
+        (let [exe-path ((sys-os-args) 0)
+              cdate (format-date exe-path)
+              display-date (if (> (count cdate) 0) cdate "unknown date")]
+          (println (str "npkm version: development (compiled " display-date ")")))
+        (sys-exit 0))
+      nil)
+    (if (or (some (fn [x] (or (= x "-h") (= x "--help"))) flags) (empty? args))
+      (do
+        (println "Usage: npkm [options] <playbook.yml | directory | http(s)://... | git repo>\n")
+        (println "Options:")
+        (println "  -v    prints version (compiled at date)")
+        (println "  -h    shows help and supported tasks")
+        (println "\nSupported Playbook Tasks:")
+        (println "  get_url:      Download a file from HTTP/HTTPS.")
+        (println "                { url: string, dest: string }")
+        (println "  copy:         Copy a file from local source to destination.")
+        (println "                { src: string, dest: string }")
+        (println "  lineinfile:   Ensure a particular line is in a file, or replace an existing line using a regular expression.")
+        (println "                { path: string, regexp?: string, line: string }")
+        (println "  command:      Execute a command without going through a shell.")
+        (println "                { cmd: string, cwd?: string }")
+        (println "  shell:        Execute a command through the system shell.")
+        (println "                { cmd: string, cwd?: string }")
+        (println "  file:         Manage files, directories, and symlinks.")
+        (println "                { path: string, state: string, src?: string, mode?: int }")
+        (println "                states: directory, touch, link, absent")
+        (println "  systemd:      Manage systemd services.")
+        (println "                { name: string, state: string, enabled: bool }")
+        (println "                states: started, stopped, restarted")
+        (println "  git:          Clone or pull a git repository.")
+        (println "                { repo: string, dest: string }")
+        (println "  remove:       Remove a file or directory.")
+        (println "                { path: string }")
+        (println "  debug:        Print a message to the console.")
+        (println "                { msg: string }")
+        (println "  replace:      Replace all instances of a regular expression in a file.")
+        (println "                { path: string, regexp: string, replace: string }")
+        (println "  fail:         Fail the playbook execution with a message.")
+        (println "                { msg: string }")
+        (println "  unzip:        Extract a zip archive.")
+        (println "                { src: string, dest: string }")
+        (println "  move:         Move or rename a file or directory.")
+        (println "                { src: string, dest: string }")
+        (println "  path:         Add a directory to the system PATH environment variable.")
+        (println "                { path: string }")
+        (println "  powershell:   Execute a PowerShell script or inline command.")
+        (println "                { inline?: string, file?: string, params?: []string, cwd?: string }")
+        (println "\nExample Playbook:")
+        (println "  tasks:")
+        (println "    - name: Ensure target directory exists")
+        (println "      file:")
+        (println "        path: /tmp/myapp")
+        (println "        state: directory")
+        (sys-exit 0))
+      nil)
+    
+    (let [playbook-file (first pos-args)]
+      (if (str/includes? playbook-file "http")
+        (let [dest (if (or (str/ends-with? playbook-file ".yml") (str/ends-with? playbook-file ".yaml")) "tmp/remote-playbook.yml" "tmp/remote-playbook.edn")
+              cmd (str "curl -sL " playbook-file " -o " dest)
+              res (shell/sh cmd)]
+          (if (= (:code res) 0)
+            (let [content (io/read-file dest)
+                  tasks (parse-playbook dest content)]
+              (loop [rem tasks]
+                (if (empty? rem)
+                  (println "Playbook finished natively in Coni!")
+                  (do
+                    (run-task (first rem))
+                    (recur (rest rem))))))
+            (do (println "Failed to download playbook") (sys-exit 1))))
+        (if (not (io/exists? playbook-file))
           (do
             (println "Error: Playbook file not found:" playbook-file)
             (sys-exit 1))
           (let [content (io/read-file playbook-file)
-                tasks (read-string content)]
+                tasks (parse-playbook playbook-file content)]
             (loop [rem tasks]
               (if (empty? rem)
                 (println "Playbook finished natively in Coni!")

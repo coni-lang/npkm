@@ -1,3 +1,0 @@
-#!/usr/bin/env coni
-(require "libs/cli/src/cli.coni" :as cli)
-(println "args=" (cli/args))
