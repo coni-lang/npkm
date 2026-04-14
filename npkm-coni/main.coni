@@ -27,16 +27,23 @@
     (let [s (:spec this)
           state (:state s)
           path (:path s)]
-      (if (= state "directory")
-        (io/make-dir path)
-        (if (= state "touch")
-          (io/write-file path "")
-          (if (= state "absent")
-            (io/delete-file path)
-            (if (= state "link")
-              (let [res (shell/sh (str "ln -s " (:src s) " " path))]
-                (if (= (:code res) 0) nil (throw (:stderr res))))
-              (throw (str "Unknown state " state)))))))))
+      (do
+        (if (= state "directory")
+          (io/make-dir path)
+          (if (= state "touch")
+            (let [res (shell/sh (str "mkdir -p \"$(dirname " path ")\" && touch " path))]
+              (if (= (:code res) 0) nil (throw (:stderr res))))
+            (if (= state "absent")
+              (io/delete-file path)
+              (if (= state "link")
+                (let [res (shell/sh (str "ln -s " (:src s) " " path))]
+                  (if (= (:code res) 0) nil (throw (:stderr res))))
+                (throw (str "Unknown state " state))))))
+        (if (:mode s)
+          (let [mode-str (:mode s)
+                res (shell/sh (str "chmod " mode-str " " path))]
+            (if (= (:code res) 0) nil (throw (:stderr res))))
+          nil)))))
 
 (defrecord DebugTask [spec]
   PlaybookTask
@@ -176,7 +183,7 @@
                         v-clean (if (and (str/starts-with? v-str "\"") (str/ends-with? v-str "\""))
                                   (str/substring v-str 1 (- (count v-str) 1))
                                   v-str)
-                        v-val (if (or (= v-clean "true") (= v-clean "false")) v-clean (str "\"" v-clean "\""))
+                        v-val (if (or (= v-clean "true") (= v-clean "false") (str/starts-with? v-clean "[") (str/starts-with? v-clean "{")) v-clean (str "\"" v-clean "\""))
                         new-mod-str (str mod-str ":" k-str " " v-val " ")]
                     (recur (rest rem) task-str new-mod-str acc))
                   (recur (rest rem) task-str mod-str acc))))))))))
@@ -300,32 +307,70 @@
         (sys-exit 0))
       nil)
     
-    (let [playbook-file (first pos-args)]
-      (if (str/includes? playbook-file "http")
-        (let [dest (if (or (str/ends-with? playbook-file ".yml") (str/ends-with? playbook-file ".yaml")) "tmp/remote-playbook.yml" "tmp/remote-playbook.edn")
-              cmd (str "curl -sL " playbook-file " -o " dest)
-              res (shell/sh cmd)]
-          (if (= (:code res) 0)
-            (let [content (io/read-file dest)
-                  tasks (parse-playbook dest content)]
-              (loop [rem tasks]
-                (if (empty? rem)
-                  (println "Playbook finished natively in Coni!")
+    (let [playbook-file (first pos-args)
+          is-git? (or (str/ends-with? playbook-file ".git") (str/starts-with? playbook-file "git://") (str/starts-with? playbook-file "git@") (str/starts-with? playbook-file "ssh://git@"))]
+      (if (io/directory? playbook-file)
+        (let [entries (io/read-dir playbook-file)]
+          (println "Available playbooks in" playbook-file ":")
+          (loop [rem entries
+                 found false]
+            (if (empty? rem)
+              (do
+                (if (not found) (println "  (No .yml or .yaml files found)") nil)
+                (sys-exit 0))
+              (let [entry (first rem)]
+                (if (or (str/ends-with? entry ".yml") (str/ends-with? entry ".yaml"))
                   (do
-                    (run-task (first rem))
-                    (recur (rest rem))))))
-            (do (println "Failed to download playbook") (sys-exit 1))))
-        (if (not (io/exists? playbook-file))
-          (do
-            (println "Error: Playbook file not found:" playbook-file)
-            (sys-exit 1))
-          (let [content (io/read-file playbook-file)
-                tasks (parse-playbook playbook-file content)]
-            (loop [rem tasks]
-              (if (empty? rem)
-                (println "Playbook finished natively in Coni!")
-                (do
-                  (run-task (first rem))
-                  (recur (rest rem)))))))))))
+                    (println "  -" entry)
+                    (recur (rest rem) true))
+                  (recur (rest rem) found))))))
+        (if is-git?
+          (let [tmp-dir "tmp/npkm-repo-coni"]
+            (println "Cloning" playbook-file "into temporary directory...")
+            (shell/sh (str "rm -rf " tmp-dir))
+            (let [res (shell/sh (str "git clone " playbook-file " " tmp-dir))]
+              (if (= (:code res) 0)
+                (let [p1 (str tmp-dir "/playbook.yml")
+                      p2 (str tmp-dir "/playbook.yaml")
+                      p3 (str tmp-dir "/playbook.edn")
+                      real-p (if (io/exists? p1) p1 (if (io/exists? p2) p2 p3))
+                      content (io/read-file real-p)
+                      tasks (parse-playbook real-p content)]
+                  (do
+                    (shell/sh (str "cd " tmp-dir))
+                    (loop [rem tasks]
+                      (if (empty? rem)
+                        (println "Playbook finished natively in Coni!")
+                        (do
+                          (run-task (first rem))
+                          (recur (rest rem)))))))
+                (do (println "Error cloning git repo:" (:stderr res)) (sys-exit 1)))))
+          (if (str/includes? playbook-file "http")
+            (let [dest (if (or (str/ends-with? playbook-file ".yml") (str/ends-with? playbook-file ".yaml")) "tmp/remote-playbook.yml" "tmp/remote-playbook.edn")
+                  cmd (str "curl -sL " playbook-file " -o " dest)
+                  res (shell/sh cmd)]
+              (if (= (:code res) 0)
+                (let [content (io/read-file dest)
+                      tasks (parse-playbook dest content)]
+                  (loop [rem tasks]
+                    (if (empty? rem)
+                      (println "Playbook finished natively in Coni!")
+                      (do
+                        (run-task (first rem))
+                        (recur (rest rem))))))
+                (do (println "Failed to download playbook") (sys-exit 1))))
+            (if (not (io/exists? playbook-file))
+              (do
+                (println "Error: Playbook file not found:" playbook-file)
+                (sys-exit 1))
+              (let [content (io/read-file playbook-file)
+                    tasks (parse-playbook playbook-file content)]
+                (loop [rem tasks]
+                  (if (empty? rem)
+                    (println "Playbook finished natively in Coni!")
+                    (do
+                      (run-task (first rem))
+                      (recur (rest rem))))))))))))
 
 (run)
+)
