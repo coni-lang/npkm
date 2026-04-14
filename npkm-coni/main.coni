@@ -154,8 +154,8 @@
     (let [s (:spec this)
           format (if (:format s) (:format s) "tar")
           cmd (if (= format "zip")
-                (str "cd "$(dirname '" (:src s) "')" && zip -r '" (:dest s) "' "$(basename '" (:src s) "')"")
-                (str "tar -czf '" (:dest s) "' -C "$(dirname '" (:src s) "')" "$(basename '" (:src s) "')""))
+                (str "cd \"$(dirname '" (:src s) "')\" && zip -r '" (:dest s) "' \"$(basename '" (:src s) "')\"")
+                (str "tar -czf '" (:dest s) "' -C \"$(dirname '" (:src s) "')\" \"$(basename '" (:src s) "')\""))
           res (shell/sh cmd)]
       (if (= (:code res) 0) nil (throw (:stderr res))))))
 
