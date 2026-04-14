@@ -16,6 +16,7 @@ NPKM is a lightweight, declarative automation and provisioning tool (similar to 
 | **Remote HTTP Playbooks** | ✅ | ✅ | Can run playbooks directly via URL |
 | **Git Repositories** | ✅ (`go-git`) | ✅ (`git clone`) | Scans cloned repo for playbook yaml/edn |
 | **Directory Scanning** | ✅ | ✅ | Recursively lists available playbook files |
+| **Global Configs** | ✅ | ✅ | Interpolation from `config:` blocks & `config.yml` into `config.*` variables |
 | **YAML Support** | ✅ (Strict) | ✅ (`yaml-to-edn`) | Natively transforms Ansible-style tasks |
 | `file` | ✅ | ✅ | directory, touch, link, absent, modes |
 | `lineinfile` | ✅ | ✅ | Regex matching & replacement in streams |
@@ -33,8 +34,24 @@ NPKM is a lightweight, declarative automation and provisioning tool (similar to 
 | `archive` | ✅ | ✅ | tar and zip abstraction across paths |
 | `template` | ✅ | ✅ | Deploy templated files with mapped vars |
 
+## Global Configuration Interpolation
+
+Both `npkm-go` and `npkm-coni` support dynamic global string replacement. You can define variables in an inline `config:` block at the top of your playbook (or placed alongside it as a separate `config.yml`), and they will be injected wherever `config.your_key` is referenced in the tasks.
+
+```yaml
+config:
+  deploy_path: /opt/production
+  service_user: nginx
+
+tasks:
+  - name: Ensure deployment directory exists
+    file:
+      path: config.deploy_path
+      state: directory
+```
+
 ## Usage
-Provide either a local YAML file, a directory, a remote HTTP/HTTPS link, or an SSH Git path:
+Provide either a local YAML/EDN file, a directory, a remote HTTP/HTTPS link, or an SSH Git path:
 ```bash
 # NPKM Go
 cd npkm-go

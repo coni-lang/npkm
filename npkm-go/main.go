@@ -20,6 +20,8 @@ import (
 )
 
 var Version string = "development"
+var bwFlag bool
+
 
 type Playbook struct {
 	Config map[string]string `yaml:"config"`
@@ -175,6 +177,7 @@ func main() {
 	var helpFlag bool
 	flag.BoolVar(&versionFlag, "v", false, "prints version (compiled at date)")
 	flag.BoolVar(&helpFlag, "h", false, "shows help and supported tasks")
+	flag.BoolVar(&bwFlag, "bw", false, "disable color output")
 	
 	flag.Usage = func() {
 		fmt.Printf("Usage: %s [options] <playbook.yml | directory | http(s)://... | git repo>\n\n", os.Args[0])
@@ -371,7 +374,11 @@ func main() {
 	}
 
 	for _, task := range playbook.Tasks {
-		fmt.Printf("TASK [%s]\n", task.Name)
+		if !bwFlag {
+			fmt.Printf("\033[36mTASK [%s]\033[0m\n", task.Name)
+		} else {
+			fmt.Printf("TASK [%s]\n", task.Name)
+		}
 		var err error
 		if task.GetUrl != nil {
 			err = executeGetUrl(task.GetUrl)
@@ -418,15 +425,27 @@ func main() {
 		} else if task.Template != nil {
 			err = executeTemplate(task.Template)
 		} else {
-			fmt.Println("  warning: unknown or missing module type")
+			if !bwFlag {
+				fmt.Println("\033[33m  warning: unknown or missing module type\033[0m")
+			} else {
+				fmt.Println("  warning: unknown or missing module type")
+			}
 			continue
 		}
 
 		if err != nil {
-			fmt.Printf("  fatal: [%s] %v\n", task.Name, err)
+			if !bwFlag {
+				fmt.Printf("\033[31m  fatal: [%s] %v\033[0m\n", task.Name, err)
+			} else {
+				fmt.Printf("  fatal: [%s] %v\n", task.Name, err)
+			}
 			os.Exit(1)
 		} else {
-			fmt.Printf("  changed\n\n")
+			if !bwFlag {
+				fmt.Printf("\033[32m  changed\033[0m\n\n")
+			} else {
+				fmt.Printf("  changed\n\n")
+			}
 		}
 	}
 }
@@ -630,7 +649,11 @@ func executeRemove(spec *Remove) error {
 }
 
 func executeDebug(spec *Debug) {
-	fmt.Printf("  msg: %s\n", spec.Msg)
+	if !bwFlag {
+		fmt.Printf("\033[35m  msg: %s\033[0m\n", spec.Msg)
+	} else {
+		fmt.Printf("  msg: %s\n", spec.Msg)
+	}
 }
 
 func executeReplace(spec *Replace) error {

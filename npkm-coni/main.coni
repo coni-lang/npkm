@@ -3,6 +3,10 @@
 (require "libs/os/src/shell.coni" :as shell)
 (require "libs/cli/src/cli.coni" :as cli)
 (require "libs/str/src/str.coni" :as str)
+(require "libs/str/src/str.coni" :as str)
+
+(defn is-bw []
+  (some (fn [x] (= x "-bw")) (cli/args)))
 
 (defprotocol PlaybookTask
   (execute [this]))
@@ -48,7 +52,9 @@
 (defrecord DebugTask [spec]
   PlaybookTask
   (execute [this]
-    (println "  msg:" (:msg (:spec this)))))
+    (if (is-bw)
+      (println "  msg:" (:msg (:spec this)))
+      (println "\033[35m  msg:" (:msg (:spec this)) "\033[0m"))))
 
 (defrecord CopyTask [spec]
   PlaybookTask
@@ -337,16 +343,24 @@
           (recur (rest rem-keys) next-curr))))))
 
 (defn parse-playbook [file content]
-  (let [local-cfg (extract-config content)
+  (let [is-yaml (or (str/ends-with? file ".yml") (str/ends-with? file ".yaml"))
+        local-cfg (if is-yaml 
+                    (extract-config content)
+                    (let [parsed (read-string content)
+                          cfg (:config parsed)]
+                      (if cfg cfg {})))
         ext-content (if (io/exists? "config.yml") (io/read-file "config.yml") "")
         ext-cfg (if (> (count ext-content) 0) (extract-config ext-content) {})
         cfg (loop [k-list (keys local-cfg) acc ext-cfg]
               (if (empty? k-list) acc
-                (recur (rest k-list) (assoc acc (first k-list) (get local-cfg (first k-list))))))
+                (let [k (first k-list)
+                      k-str (if (str/starts-with? (str k) ":") (str/substring (str k) 1 (count (str k))) (str k))]
+                  (recur (rest k-list) (assoc acc k-str (get local-cfg k))))))
         interp-content (interpolate-config content cfg)]
-    (if (or (str/ends-with? file ".yml") (str/ends-with? file ".yaml"))
+    (if is-yaml
       (read-string (yaml-to-edn interp-content))
-      (read-string interp-content))))
+      (let [parsed (read-string interp-content)]
+        (if (:tasks parsed) (:tasks parsed) parsed)))))
 
 
 
@@ -397,20 +411,27 @@
           (recur (rest rem)))))))
 
 (defn run-task [raw-task]
-  (println "TASK [" (:name raw-task) "]")
+  (if (is-bw)
+    (println "TASK [" (:name raw-task) "]")
+    (println "\033[36mTASK [" (:name raw-task) "]\033[0m"))
   (let [match (get-task-match raw-task)]
     (if match
       (let [k (first match)
             v (second match)
             constructor (get playbook-task-registry k)]
         (execute (constructor v)))
-      (println "warning: unknown or missing module type")))
-  (println "  changed\n"))
+      (if (is-bw)
+        (println "  warning: unknown or missing module type")
+        (println "\033[33m  warning: unknown or missing module type\033[0m"))))
+  (if (is-bw)
+    (println "  changed\n")
+    (println "\033[32m  changed\033[0m\n")))
 
 (defn run []
   (let [args (cli/args)
         flags (filter (fn [x] (str/starts-with? x "-")) args)
-        pos-args (filter (fn [x] (not (str/starts-with? x "-"))) args)]
+        pos-args (filter (fn [x] (not (str/starts-with? x "-"))) args)
+        is-bw (some (fn [x] (= x "-bw")) flags)]
     (if (some (fn [x] (or (= x "-v") (= x "-V") (= x "--version"))) flags)
       (do
         (let [exe-path ((sys-os-args) 0)
@@ -425,6 +446,7 @@
         (println "Options:")
         (println "  -v    prints version (compiled at date)")
         (println "  -h    shows help and supported tasks")
+        (println "  -bw   disable color output")
         (println "\nSupported Playbook Tasks:")
         (println "  get_url:      Download a file from HTTP/HTTPS.")
         (println "                { url: string, dest: string }")
@@ -508,11 +530,13 @@
                     (shell/sh (str "cd " tmp-dir))
                     (loop [rem tasks]
                       (if (empty? rem)
-                        (println "Playbook finished natively in Coni!")
+                        (if is-bw
+                          (println "Playbook finished natively in Coni!")
+                          (println "\033[34mPlaybook finished natively in Coni!\033[0m"))
                         (do
                           (run-task (first rem))
                           (recur (rest rem)))))))
-                (do (println "Error cloning git repo:" (:stderr res)) (sys-exit 1)))))
+                (do (if is-bw (println "Error cloning git repo:" (:stderr res)) (println "\033[31mError cloning git repo:" (:stderr res) "\033[0m")) (sys-exit 1)))))
           (if (str/includes? playbook-file "http")
             (let [dest (if (or (str/ends-with? playbook-file ".yml") (str/ends-with? playbook-file ".yaml")) "tmp/remote-playbook.yml" "tmp/remote-playbook.edn")
                   cmd (str "curl -sL " playbook-file " -o " dest)
@@ -522,20 +546,24 @@
                       tasks (parse-playbook dest content)]
                   (loop [rem tasks]
                     (if (empty? rem)
-                      (println "Playbook finished natively in Coni!")
+                      (if is-bw
+                        (println "Playbook finished natively in Coni!")
+                        (println "\033[34mPlaybook finished natively in Coni!\033[0m"))
                       (do
                         (run-task (first rem))
                         (recur (rest rem))))))
-                (do (println "Failed to download playbook") (sys-exit 1))))
+                (do (if is-bw (println "Failed to download playbook") (println "\033[31mFailed to download playbook\033[0m")) (sys-exit 1))))
             (if (not (io/exists? playbook-file))
               (do
-                (println "Error: Playbook file not found:" playbook-file)
+                (if is-bw (println "Error: Playbook file not found:" playbook-file) (println "\033[31mError: Playbook file not found:" playbook-file "\033[0m"))
                 (sys-exit 1))
               (let [content (io/read-file playbook-file)
                     tasks (parse-playbook playbook-file content)]
                 (loop [rem tasks]
                   (if (empty? rem)
-                    (println "Playbook finished natively in Coni!")
+                    (if is-bw
+                      (println "Playbook finished natively in Coni!")
+                      (println "\033[34mPlaybook finished natively in Coni!\033[0m"))
                     (do
                       (run-task (first rem))
                       (recur (rest rem))))))))))))

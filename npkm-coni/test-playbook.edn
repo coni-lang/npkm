@@ -1,0 +1,9 @@
+{:config {:test_dir "tmp/mytestdir"
+          :test_msg "Hello Config"}
+ :tasks [
+  {:name "Test File"
+   :file {:path "config.test_dir"
+          :state "directory"}}
+  {:name "Test Msg"
+   :debug {:msg "config.test_msg"}}
+ ]}
