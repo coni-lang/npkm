@@ -176,7 +176,7 @@
                     (if (= state "absent") (str "apt-get remove -y " (:name s)) (str "apt-get install -y " (:name s)))
                   (if (= pkg-mgr "yum")
                     (if (= state "absent") (str "yum remove -y " (:name s)) (str "yum install -y " (:name s)))
-                    "echo 'No package manager found' && exit 1")))))]
+                    "echo 'No package manager found' && exit 1")))))
           res (shell/sh cmd)]
       (if (= (:code res) 0) nil (throw (:stderr res))))))
 
