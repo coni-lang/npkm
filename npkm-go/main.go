@@ -22,7 +22,8 @@ import (
 var Version string = "development"
 
 type Playbook struct {
-	Tasks []Task `yaml:"tasks"`
+	Config map[string]string `yaml:"config"`
+	Tasks  []Task            `yaml:"tasks"`
 }
 
 type Task struct {
@@ -331,6 +332,36 @@ func main() {
 			fmt.Printf("Error reading playbook: %v\n", err)
 			os.Exit(1)
 		}
+	}
+
+	var interim struct {
+		Config map[string]string `yaml:"config"`
+	}
+	yaml.Unmarshal(data, &interim)
+
+	configData, configErr := os.ReadFile("config.yml")
+	if configErr == nil {
+		var separateConfig struct {
+			Config map[string]string `yaml:"config"`
+		}
+		yaml.Unmarshal(configData, &separateConfig)
+		if interim.Config == nil {
+			interim.Config = make(map[string]string)
+		}
+		for k, v := range separateConfig.Config {
+			if _, ok := interim.Config[k]; !ok {
+				interim.Config[k] = v
+			}
+		}
+	}
+
+	if interim.Config != nil {
+		yamlStr := string(data)
+		for k, v := range interim.Config {
+			// Allow standard string replacement for literal usages
+			yamlStr = strings.ReplaceAll(yamlStr, "config."+k, v)
+		}
+		data = []byte(yamlStr)
 	}
 
 	var playbook Playbook
