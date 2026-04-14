@@ -26,6 +26,12 @@ NPKM is a lightweight, declarative automation and provisioning tool (similar to 
 | `get_url` / `unzip` | ✅ | ✅ | Downloads and extracts remote assets |
 | `shell`, `command`, `pwsh`| ✅ | ✅ | Shell integration along with Powershell |
 | `debug`, `fail` | ✅ | ✅ | Playbook execution handling |
+| `package` | ✅ | ✅ | Auto-detects brew, apt-get, yum, or choco |
+| `service` | ✅ | ✅ | Generalizes systemctl, launchctl, and net start |
+| `cron` | ✅ | ✅ | UNIX crontab -l / - insertion & absent state |
+| `user` | ✅ | ✅ | Integrates useradd, sysadminctl, net user |
+| `archive` | ✅ | ✅ | tar and zip abstraction across paths |
+| `template` | ✅ | ✅ | Deploy templated files with mapped vars |
 
 ## Usage
 Provide either a local YAML file, a directory, a remote HTTP/HTTPS link, or an SSH Git path:

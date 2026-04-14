@@ -147,6 +147,116 @@
           res (shell/sh cmd)]
       (if (= (:code res) 0) nil (throw (:stderr res))))))
 
+
+(defrecord ArchiveTask [spec]
+  PlaybookTask
+  (execute [this]
+    (let [s (:spec this)
+          format (if (:format s) (:format s) "tar")
+          cmd (if (= format "zip")
+                (str "cd "$(dirname '" (:src s) "')" && zip -r '" (:dest s) "' "$(basename '" (:src s) "')"")
+                (str "tar -czf '" (:dest s) "' -C "$(dirname '" (:src s) "')" "$(basename '" (:src s) "')""))
+          res (shell/sh cmd)]
+      (if (= (:code res) 0) nil (throw (:stderr res))))))
+
+(defrecord PackageTask [spec]
+  PlaybookTask
+  (execute [this]
+    (let [s (:spec this)
+          os-res (shell/sh "uname -s")
+          os-name (str/trim (if (= (:code os-res) 0) (:stdout os-res) ""))
+          win? (= os-name "")
+          state (:state s)
+          cmd (if win?
+                (if (= state "absent") (str "choco uninstall -y " (:name s)) (str "choco install -y " (:name s)))
+                (let [pkg-mgr (str/trim (:stdout (shell/sh "if command -v brew >/dev/null 2>&1; then echo brew; elif command -v apt-get >/dev/null 2>&1; then echo apt-get; elif command -v yum >/dev/null 2>&1; then echo yum; fi")))]
+                  (if (= pkg-mgr "brew")
+                    (if (= state "absent") (str "brew uninstall " (:name s)) (str "brew install " (:name s)))
+                  (if (= pkg-mgr "apt-get")
+                    (if (= state "absent") (str "apt-get remove -y " (:name s)) (str "apt-get install -y " (:name s)))
+                  (if (= pkg-mgr "yum")
+                    (if (= state "absent") (str "yum remove -y " (:name s)) (str "yum install -y " (:name s)))
+                    "echo 'No package manager found' && exit 1")))))]
+          res (shell/sh cmd)]
+      (if (= (:code res) 0) nil (throw (:stderr res))))))
+
+(defrecord CronTask [spec]
+  PlaybookTask
+  (execute [this]
+    (let [s (:spec this)
+          os-res (shell/sh "uname -s")
+          os-name (str/trim (if (= (:code os-res) 0) (:stdout os-res) ""))
+          win? (= os-name "")]
+      (if win?
+        (throw "Cron task not natively supported on Windows via npkm yet")
+        (let [marker (str "# NPKM: " (:name s))
+              job (str (:schedule s) " " (:job s))
+              state (:state s)
+              sh-cmd (if (= state "absent")
+                       (str "crontab -l 2>/dev/null | grep -v '" marker "' | grep -v '" job "' | crontab -")
+                       (str "(crontab -l 2>/dev/null | grep -v '" marker "' | grep -v '" job "'; echo '" marker "'; echo '" job "') | crontab -"))
+              res (shell/sh sh-cmd)]
+          (if (= (:code res) 0) nil (throw (:stderr res))))))))
+
+(defrecord ServiceTask [spec]
+  PlaybookTask
+  (execute [this]
+    (let [s (:spec this)
+          os-res (shell/sh "uname -s")
+          os-name (str/trim (if (= (:code os-res) 0) (:stdout os-res) ""))
+          mac? (= os-name "Darwin")
+          win? (= os-name "")
+          state (:state s)
+          cmd (if win?
+                (let [action (if (= state "stopped") "stop" "start")]
+                  (str "net " action " " (:name s)))
+                (if mac?
+                  (let [action (if (= state "stopped") "unload" "load")]
+                    (str "launchctl " action " " (:name s)))
+                  (let [action (if (= state "stopped") "stop" (if (= state "restarted") "restart" "start"))]
+                    (str "systemctl " action " " (:name s)))))]
+       (let [res (shell/sh cmd)]
+          (if (= (:code res) 0) nil (throw (:stderr res)))))))
+
+(defrecord UserTask [spec]
+  PlaybookTask
+  (execute [this]
+    (let [s (:spec this)
+          os-res (shell/sh "uname -s")
+          os-name (str/trim (if (= (:code os-res) 0) (:stdout os-res) ""))
+          mac? (= os-name "Darwin")
+          win? (= os-name "")
+          state (:state s)
+          cmd (if win?
+                (if (= state "absent") (str "net user " (:name s) " /delete") (str "net user " (:name s) " /add"))
+                (if mac?
+                  (if (= state "absent") (str "sysadminctl -deleteUser " (:name s)) (str "sysadminctl -addUser " (:name s)))
+                  (if (= state "absent") (str "userdel " (:name s)) (str "useradd " (:name s)))))]
+       (let [res (shell/sh cmd)]
+          (if (= (:code res) 0) nil (throw (:stderr res)))))))
+
+(defrecord TemplateTask [spec]
+  PlaybookTask
+  (execute [this]
+    (let [s (:spec this)
+          content (io/read-file (:src s))
+          vars (:vars s)]
+      (if (and vars content)
+        (let [keys (str/split vars ",")]
+          (loop [rem keys
+                 curr content]
+            (if (empty? rem)
+              (do
+                (io/write-file (:dest s) curr)
+                nil)
+              (let [pair (str/split (first rem) "=")
+                    k (str/trim (if (> (count pair) 0) (first pair) ""))
+                    v (str/trim (if (> (count pair) 1) (second pair) ""))
+                    placeholder (str "{{ " k " }}")
+                    next-curr (str/replace curr placeholder v)]
+                (recur (rest rem) next-curr)))))
+        (throw "Template task requires src and vars (as k=v,...)")))))
+
 (defn yaml-to-edn [content]
   (let [lines (str/split content "\n")]
     (loop [rem lines
@@ -218,6 +328,12 @@
    :lineinfile LineInFileTask
    :replace ReplaceTask
    :systemd SystemdTask
+   :package PackageTask
+   :cron CronTask
+   :archive ArchiveTask
+   :user UserTask
+   :service ServiceTask
+   :template TemplateTask
    :path PathTask
    :powershell PowershellTask})
 
@@ -298,6 +414,12 @@
         (println "                { path: string }")
         (println "  powershell:   Execute a PowerShell script or inline command.")
         (println "                { inline?: string, file?: string, params?: []string, cwd?: string }")
+        (println "  package:      Manage OS packages.")
+        (println "  cron:         Manage crontab entries.")
+        (println "  archive:      Compress files/directories.")
+        (println "  user:         Manage OS users.")
+        (println "  service:      Manage cross-platform background services.")
+        (println "  template:     Deploy templated files replacing {{ key }} with Map vars.")
         (println "\nExample Playbook:")
         (println "  tasks:")
         (println "    - name: Ensure target directory exists")
@@ -372,5 +494,5 @@
                       (run-task (first rem))
                       (recur (rest rem))))))))))))
 
-(run)
 )
+(run)

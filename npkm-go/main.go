@@ -43,6 +43,12 @@ type Task struct {
 	Move       *Move       `yaml:"move,omitempty"`
 	Path       *PathTask   `yaml:"path,omitempty"`
 	PowerShell *PowerShell `yaml:"powershell,omitempty"`
+	Package    *Package    `yaml:"package,omitempty"`
+	Cron       *Cron       `yaml:"cron,omitempty"`
+	Archive    *Archive    `yaml:"archive,omitempty"`
+	User       *User       `yaml:"user,omitempty"`
+	Service    *Service    `yaml:"service,omitempty"`
+	Template   *Template   `yaml:"template,omitempty"`
 }
 
 type GetUrl struct {
@@ -69,6 +75,41 @@ type PowerShell struct {
 	File   string   `yaml:"file,omitempty"`
 	Params []string `yaml:"params,omitempty"`
 	Cwd    string   `yaml:"cwd,omitempty"`
+}
+
+type Package struct {
+	Name  string `yaml:"name"`
+	State string `yaml:"state"` // present, absent
+}
+
+type Cron struct {
+	Name     string `yaml:"name"`
+	Job      string `yaml:"job"`
+	Schedule string `yaml:"schedule"` // e.g. "0 2 * * *"
+	State    string `yaml:"state"` // present, absent
+}
+
+type Archive struct {
+	Src    string `yaml:"src"`
+	Dest   string `yaml:"dest"`
+	Format string `yaml:"format"` // zip, tar
+}
+
+type User struct {
+	Name  string `yaml:"name"`
+	State string `yaml:"state"` // present, absent
+}
+
+type Service struct {
+	Name    string `yaml:"name"`
+	State   string `yaml:"state"` // started, stopped, restarted
+	Enabled bool   `yaml:"enabled"`
+}
+
+type Template struct {
+	Src  string            `yaml:"src"`
+	Dest string            `yaml:"dest"`
+	Vars map[string]string `yaml:"vars"` // For Go, normal maps work
 }
 
 type LineInFile struct {
@@ -173,6 +214,12 @@ func main() {
 		fmt.Println("                { path: string }")
 		fmt.Println("  powershell:   Execute a PowerShell script or inline command.")
 		fmt.Println("                { inline?: string, file?: string, params?: []string, cwd?: string }")
+		fmt.Println("  package:      Manage OS packages.")
+		fmt.Println("  cron:         Manage crontab entries.")
+		fmt.Println("  archive:      Compress files/directories.")
+		fmt.Println("  user:         Manage OS users.")
+		fmt.Println("  service:      Manage cross-platform background services.")
+		fmt.Println("  template:     Deploy templated files replacing {{ key }} with Map vars.")
 		fmt.Println("\nExample Playbook:")
 		fmt.Println("  tasks:")
 		fmt.Println("    - name: Ensure target directory exists")
@@ -327,6 +374,18 @@ func main() {
 			err = executePath(task.Path)
 		} else if task.PowerShell != nil {
 			err = executePowerShell(task.PowerShell)
+		} else if task.Package != nil {
+			err = executePackage(task.Package)
+		} else if task.Cron != nil {
+			err = executeCron(task.Cron)
+		} else if task.Archive != nil {
+			err = executeArchive(task.Archive)
+		} else if task.User != nil {
+			err = executeUser(task.User)
+		} else if task.Service != nil {
+			err = executeService(task.Service)
+		} else if task.Template != nil {
+			err = executeTemplate(task.Template)
 		} else {
 			fmt.Println("  warning: unknown or missing module type")
 			continue
@@ -726,4 +785,135 @@ func executePowerShell(spec *PowerShell) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+
+func executePackage(spec *Package) error {
+	packages := []string{"brew", "apt-get", "yum", "choco"}
+	var pkgCmd string
+	for _, p := range packages {
+		if err := exec.Command("which", p).Run(); err == nil {
+			pkgCmd = p
+			break
+		}
+	}
+	if pkgCmd == "" && runtime.GOOS == "windows" {
+		pkgCmd = "choco"
+	} else if pkgCmd == "" {
+		return fmt.Errorf("no supported package manager found")
+	}
+
+	installCmd := "install"
+	if spec.State == "absent" {
+		installCmd = "uninstall"
+		if pkgCmd == "apt-get" || pkgCmd == "yum" {
+			installCmd = "remove"
+		}
+	}
+	
+	args := []string{installCmd}
+	if pkgCmd == "apt-get" || pkgCmd == "yum" || pkgCmd == "choco" {
+		args = append(args, "-y")
+	}
+	args = append(args, spec.Name)
+	cmd := exec.Command(pkgCmd, args...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+func executeCron(spec *Cron) error {
+	if runtime.GOOS == "windows" {
+		return fmt.Errorf("cron task not yet supported on windows")
+	}
+	marker := fmt.Sprintf("# NPKM: %s", spec.Name)
+	out, _ := exec.Command("crontab", "-l").Output()
+	lines := strings.Split(string(out), "\n")
+	var newLines []string
+	skip := false
+	for _, line := range lines {
+		if strings.TrimSpace(line) == "" { continue }
+		if line == marker {
+			skip = true
+			continue
+		}
+		if skip {
+			skip = false
+			continue
+		}
+		newLines = append(newLines, line)
+	}
+
+	if spec.State != "absent" {
+		newLines = append(newLines, marker)
+		newLines = append(newLines, fmt.Sprintf("%s %s", spec.Schedule, spec.Job))
+	}
+	newLines = append(newLines, "")
+	
+	cmd := exec.Command("crontab", "-")
+	cmd.Stdin = strings.NewReader(strings.Join(newLines, "\n"))
+	return cmd.Run()
+}
+
+func executeArchive(spec *Archive) error {
+	format := spec.Format
+	if format == "" { format = "tar" }
+	var cmd *exec.Cmd
+	if format == "zip" {
+		cmd = exec.Command("zip", "-r", spec.Dest, filepath.Base(spec.Src))
+		cmd.Dir = filepath.Dir(spec.Src)
+	} else {
+		cmd = exec.Command("tar", "-czf", spec.Dest, "-C", filepath.Dir(spec.Src), filepath.Base(spec.Src))
+	}
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+func executeUser(spec *User) error {
+	goos := runtime.GOOS
+	if goos == "windows" {
+		if spec.State == "absent" {
+			return exec.Command("net", "user", spec.Name, "/delete").Run()
+		}
+		return exec.Command("net", "user", spec.Name, "/add").Run()
+	} else if goos == "darwin" {
+		if spec.State == "absent" {
+			return exec.Command("sysadminctl", "-deleteUser", spec.Name).Run()
+		}
+		return exec.Command("sysadminctl", "-addUser", spec.Name).Run()
+	} else {
+		if spec.State == "absent" {
+			return exec.Command("userdel", spec.Name).Run()
+		}
+		return exec.Command("useradd", spec.Name).Run()
+	}
+}
+
+func executeService(spec *Service) error {
+	goos := runtime.GOOS
+	if goos == "windows" {
+		action := "start"
+		if spec.State == "stopped" { action = "stop" }
+		return exec.Command("net", action, spec.Name).Run()
+	} else if goos == "darwin" {
+		action := "load"
+		if spec.State == "stopped" { action = "unload" }
+		return exec.Command("launchctl", action, spec.Name).Run()
+	} else {
+		action := "start"
+		if spec.State == "stopped" { action = "stop" }
+		if spec.State == "restarted" { action = "restart" }
+		return exec.Command("systemctl", action, spec.Name).Run()
+	}
+}
+
+func executeTemplate(spec *Template) error {
+	content, err := os.ReadFile(spec.Src)
+	if err != nil { return err }
+	res := string(content)
+	for k, v := range spec.Vars {
+		res = strings.ReplaceAll(res, fmt.Sprintf("{{ %s }}", k), v)
+	}
+	return os.WriteFile(spec.Dest, []byte(res), 0644)
 }
