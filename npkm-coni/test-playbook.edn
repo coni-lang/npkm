@@ -6,4 +6,9 @@
           :state "directory"}}
   {:name "Test Msg"
    :debug {:msg "config.test_msg"}}
+  {:name "Run command"
+   :shell {:cmd "echo \"Hello Runtime World\""}
+   :register "say_hi"}
+  {:name "Output captured debug"
+   :debug {:msg "var.say_hi"}}
  ]}
