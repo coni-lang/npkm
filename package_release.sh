@@ -9,6 +9,13 @@ set -e
 # Usage: ./package_release.sh
 # ======================================================
 
+# Define which Coni source tree to use
+CONI_SRC="/Users/nico/cool/s5/coni-lang-gitea"
+export CONI_HOME="$CONI_SRC"
+
+# Ensure typical paths for Go are available
+export PATH="$PATH:/usr/local/go/bin:/opt/homebrew/bin"
+
 BUILD_DATE=$(date '+%Y-%m-%d-%H%M')
 DIST_DIR="dist"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -16,13 +23,22 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 echo "============================================"
 echo "  NPKM-Coni Build & Package"
 echo "  Date: $BUILD_DATE"
+echo "  Using Coni Source: $CONI_SRC"
 echo "============================================"
+
+# Build the fresh compiler binary
+TEMP_CONI_BIN="/tmp/coni-compiler"
+echo ""
+echo "▸ Building latest Coni compiler from source..."
+cd "$CONI_SRC"
+go build -o "$TEMP_CONI_BIN" .
+echo "  ✓ Compiler built at $TEMP_CONI_BIN"
 
 # 0. Run tests
 echo ""
 echo "▸ Running tests..."
 cd "$SCRIPT_DIR/npkm-coni"
-coni test ...
+"$TEMP_CONI_BIN" test ...
 
 # 1. Clean dist
 cd "$SCRIPT_DIR"
@@ -33,12 +49,12 @@ mkdir -p "$DIST_DIR"
 echo ""
 echo "▸ Building macOS binary (darwin/arm64)..."
 cd "$SCRIPT_DIR/npkm-coni"
-coni build . -o "$SCRIPT_DIR/$DIST_DIR/npkm-coni"
+"$TEMP_CONI_BIN" build . -o "$SCRIPT_DIR/$DIST_DIR/npkm-coni"
 
 # 3. Build Windows (cross-compile amd64)
 echo ""
 echo "▸ Building Windows binary (windows/amd64)..."
-CGO_ENABLED=0 GOOS=windows GOARCH=amd64 coni build . -o "$SCRIPT_DIR/$DIST_DIR/npkm-coni.exe"
+CGO_ENABLED=0 GOOS=windows GOARCH=amd64 "$TEMP_CONI_BIN" build . -o "$SCRIPT_DIR/$DIST_DIR/npkm-coni.exe"
 
 cd "$SCRIPT_DIR"
 
