@@ -1,0 +1,93 @@
+;; === NPKM YAML-to-EDN Parser ===
+;; Converts Ansible-style YAML playbook content into EDN data structures
+;; that can be consumed by read-string.
+
+(require "libs/str/src/str.coni" :as str)
+
+(defn yaml-to-edn
+  "Converts YAML playbook content to an EDN string representation.
+   Handles top-level task definitions with module sub-keys containing
+   key:value pairs. Returns a string that can be parsed by read-string
+   into a vector of task maps."
+  [content]
+  (let [lines (str/split content "\n")]
+    (loop [rem lines
+           task-str ""
+           mod-str ""
+           acc "["]
+      (if (empty? rem)
+        (let [final-task (if (> (count mod-str) 0) (str task-str mod-str "}") task-str)
+              final-acc (if (> (count final-task) 0) (str acc "{" final-task "}]") (str acc "]"))]
+          final-acc)
+        (let [line (first rem)
+              trim-line (str/trim line)
+              is-comment (str/starts-with? trim-line "#")
+              is-empty (= trim-line "")]
+          (if (or is-comment is-empty (= trim-line "tasks:"))
+            (recur (rest rem) task-str mod-str acc)
+            (if (str/starts-with? trim-line "- name:")
+              (let [task-name (str/trim (str/substring trim-line 7 (count trim-line)))
+                    clean-name (if (str/starts-with? task-name "\"") (str/substring task-name 1 (- (count task-name) 1)) task-name)
+                    prev-task (if (> (count mod-str) 0) (str task-str mod-str "}") task-str)
+                    next-acc (if (> (count prev-task) 0) (str acc "{" prev-task "} ") acc)
+                    new-task-str (str ":name \"" clean-name "\" ")]
+                (recur (rest rem) new-task-str "" next-acc))
+              (if (and (> (count task-str) 0) (str/ends-with? trim-line ":"))
+                (let [mod-name (str/substring trim-line 0 (- (count trim-line) 1))
+                      prev-mod (if (> (count mod-str) 0) (str mod-str "} ") "")
+                      new-task-str (str task-str prev-mod)
+                      new-mod-str (str ":" mod-name " {")]
+                  (recur (rest rem) new-task-str new-mod-str acc))
+                (if (and (> (count task-str) 0) (> (count mod-str) 0) (str/includes? trim-line ":"))
+                  (let [colon-idx (str/index-of trim-line ":")
+                        k-str (str/trim (str/substring trim-line 0 colon-idx))
+                        v-str (str/trim (str/substring trim-line (+ colon-idx 1) (count trim-line)))
+                        v-clean (if (and (str/starts-with? v-str "\"") (str/ends-with? v-str "\""))
+                                  (str/substring v-str 1 (- (count v-str) 1))
+                                  v-str)
+                        v-val (if (or (= v-clean "true") (= v-clean "false") (str/starts-with? v-clean "[") (str/starts-with? v-clean "{")) v-clean (str "\"" v-clean "\""))
+                        new-mod-str (str mod-str ":" k-str " " v-val " ")]
+                    (recur (rest rem) task-str new-mod-str acc))
+                  (recur (rest rem) task-str mod-str acc))))))))))
+
+(defn extract-config
+  "Extracts config key-value pairs from YAML content.
+   Returns a map of string keys to string values."
+  [content]
+  (let [lines (str/split content "\n")]
+    (loop [rem lines
+           in-config false
+           cfg {}]
+      (if (empty? rem)
+        cfg
+        (let [line (first rem)
+              trim-line (str/trim line)]
+          (if (= trim-line "config:")
+            (recur (rest rem) true cfg)
+            (if (or (= trim-line "tasks:") (str/starts-with? trim-line "- name:"))
+              (recur (rest rem) false cfg)
+              (if (and in-config (str/includes? trim-line ":"))
+                (let [colon-idx (str/index-of trim-line ":")
+                      k-str (str/trim (str/substring trim-line 0 colon-idx))
+                      v-str (str/trim (str/substring trim-line (+ colon-idx 1) (count trim-line)))
+                      v-clean (if (and (str/starts-with? v-str "\"") (str/ends-with? v-str "\""))
+                                  (str/substring v-str 1 (- (count v-str) 1))
+                                  (if (and (str/starts-with? v-str "'") (str/ends-with? v-str "'"))
+                                      (str/substring v-str 1 (- (count v-str) 1))
+                                      v-str))]
+                  (recur (rest rem) true (assoc cfg k-str v-clean)))
+                (recur (rest rem) in-config cfg)))))))))
+
+(defn interpolate-config
+  "Replaces config.key placeholders in content with their values from cfg map."
+  [content cfg]
+  (let [k-list (keys cfg)]
+    (loop [rem-keys k-list
+           curr content]
+      (if (empty? rem-keys)
+        curr
+        (let [k (first rem-keys)
+              v (get cfg k)
+              placeholder (str "config." k)
+              next-curr (str/replace curr placeholder v)]
+          (recur (rest rem-keys) next-curr))))))
