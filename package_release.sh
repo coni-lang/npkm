@@ -68,3 +68,17 @@ echo "Artifacts:"
 ls -lh "$DIST_DIR/npkm-coni"
 ls -lh "$DIST_DIR/npkm-coni.exe"
 ls -lh "$DIST_DIR/$ARCHIVE_NAME"
+
+# 6. Deploy to samba share
+SAMBA_DIR="/Volumes/share/npkm"
+if [ -d "$SAMBA_DIR" ]; then
+  echo ""
+  echo "▸ Deploying to samba share..."
+  pv "$DIST_DIR/$ARCHIVE_NAME" > "$SAMBA_DIR/$ARCHIVE_NAME"
+  echo "  ✓ Copied to $SAMBA_DIR/$ARCHIVE_NAME"
+else
+  echo ""
+  echo "⚠ Samba share not mounted at $SAMBA_DIR — skipping deploy"
+  echo "  Mount it and run:"
+  echo "  pv $DIST_DIR/$ARCHIVE_NAME > $SAMBA_DIR/$ARCHIVE_NAME"
+fi
