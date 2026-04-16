@@ -4,51 +4,113 @@
 
 (require "libs/str/src/str.coni" :as str)
 
+(defn strip-quotes
+  "Strips matching single or double quotes from a string value."
+  [s]
+  (if (>= (count s) 2)
+    (if (and (str/starts-with? s "\"") (str/ends-with? s "\""))
+      (str/substring s 1 (- (count s) 1))
+      (if (and (str/starts-with? s "'") (str/ends-with? s "'"))
+        (str/substring s 1 (- (count s) 1))
+        s))
+    s))
+
+(defn edn-escape
+  "Escapes backslashes in a string so it survives EDN read-string."
+  [s]
+  (str/replace s "\\" "\\\\"))
+
 (defn yaml-to-edn
   "Converts YAML playbook content to an EDN string representation.
    Handles top-level task definitions with module sub-keys containing
-   key:value pairs. Returns a string that can be parsed by read-string
-   into a vector of task maps."
+   key:value pairs and list items (- value). Returns a string that can
+   be parsed by read-string into a vector of task maps."
   [content]
   (let [lines (str/split content "\n")]
     (loop [rem lines
            task-str ""
            mod-str ""
+           list-key ""
+           list-str ""
            acc "["]
       (if (empty? rem)
-        (let [final-task (if (> (count mod-str) 0) (str task-str mod-str "}") task-str)
+        ;; === END OF INPUT: close everything ===
+        (let [;; Close any open list into the module
+              final-mod (if (> (count list-key) 0)
+                          (str mod-str " :" list-key " [" list-str "]")
+                          mod-str)
+              ;; Close any open module into the task
+              final-task (if (> (count final-mod) 0) (str task-str final-mod "}") task-str)
+              ;; Close final task into accumulator
               final-acc (if (> (count final-task) 0) (str acc "{" final-task "}]") (str acc "]"))]
           final-acc)
+
         (let [line (first rem)
               trim-line (str/trim line)
               is-comment (str/starts-with? trim-line "#")
               is-empty (= trim-line "")]
+
+          ;; Skip comments, empty lines, and the tasks: keyword
           (if (or is-comment is-empty (= trim-line "tasks:"))
-            (recur (rest rem) task-str mod-str acc)
+            (recur (rest rem) task-str mod-str list-key list-str acc)
+
+            ;; === NEW TASK: - name: ... ===
             (if (str/starts-with? trim-line "- name:")
               (let [task-name (str/trim (str/substring trim-line 7 (count trim-line)))
-                    clean-name (if (str/starts-with? task-name "\"") (str/substring task-name 1 (- (count task-name) 1)) task-name)
-                    prev-task (if (> (count mod-str) 0) (str task-str mod-str "}") task-str)
+                    clean-name (if (str/starts-with? task-name "\"")
+                                 (str/substring task-name 1 (- (count task-name) 1))
+                                 task-name)
+                    ;; Close any open list
+                    closed-mod (if (> (count list-key) 0)
+                                 (str mod-str " :" list-key " [" list-str "]")
+                                 mod-str)
+                    ;; Close any open module
+                    prev-task (if (> (count closed-mod) 0) (str task-str closed-mod "}") task-str)
+                    ;; Close previous task
                     next-acc (if (> (count prev-task) 0) (str acc "{" prev-task "} ") acc)
                     new-task-str (str ":name \"" clean-name "\" ")]
-                (recur (rest rem) new-task-str "" next-acc))
-              (if (and (> (count task-str) 0) (str/ends-with? trim-line ":"))
-                (let [mod-name (str/substring trim-line 0 (- (count trim-line) 1))
-                      prev-mod (if (> (count mod-str) 0) (str mod-str "} ") "")
-                      new-task-str (str task-str prev-mod)
-                      new-mod-str (str ":" mod-name " {")]
-                  (recur (rest rem) new-task-str new-mod-str acc))
-                (if (and (> (count task-str) 0) (> (count mod-str) 0) (str/includes? trim-line ":"))
-                  (let [colon-idx (str/index-of trim-line ":")
-                        k-str (str/trim (str/substring trim-line 0 colon-idx))
-                        v-str (str/trim (str/substring trim-line (+ colon-idx 1) (count trim-line)))
-                        v-clean (if (and (str/starts-with? v-str "\"") (str/ends-with? v-str "\""))
-                                  (str/substring v-str 1 (- (count v-str) 1))
-                                  v-str)
-                        v-val (if (or (= v-clean "true") (= v-clean "false") (str/starts-with? v-clean "[") (str/starts-with? v-clean "{")) v-clean (str "\"" v-clean "\""))
-                        new-mod-str (str mod-str ":" k-str " " v-val " ")]
-                    (recur (rest rem) task-str new-mod-str acc))
-                  (recur (rest rem) task-str mod-str acc))))))))))
+                (recur (rest rem) new-task-str "" "" "" next-acc))
+
+              ;; === LIST ITEM: - value (not - name:) ===
+              (if (and (str/starts-with? trim-line "- ") (> (count list-key) 0))
+                (let [item-raw (str/trim (str/substring trim-line 2 (count trim-line)))
+                      item-clean (strip-quotes item-raw)
+                      item-edn (str "\"" (edn-escape item-clean) "\"")
+                      new-list-str (if (> (count list-str) 0)
+                                     (str list-str " " item-edn)
+                                     item-edn)]
+                  (recur (rest rem) task-str mod-str list-key new-list-str acc))
+
+                ;; === LINE ENDING WITH : (module or sub-key) ===
+                (if (and (> (count task-str) 0) (str/ends-with? trim-line ":"))
+                  (let [key-name (str/substring trim-line 0 (- (count trim-line) 1))]
+                    (if (= (count mod-str) 0)
+                      ;; No module open — start a new top-level module (e.g. powershell:)
+                      (recur (rest rem) task-str (str ":" key-name " {") "" "" acc)
+                      ;; Module already open — this is a sub-key (e.g. params:)
+                      ;; Close any previous list first
+                      (let [closed-mod (if (> (count list-key) 0)
+                                         (str mod-str " :" list-key " [" list-str "]")
+                                         mod-str)]
+                        (recur (rest rem) task-str closed-mod key-name "" acc))))
+
+                  ;; === KEY:VALUE PAIR inside a module ===
+                  (if (and (> (count task-str) 0) (> (count mod-str) 0)
+                           (= (count list-key) 0) (str/includes? trim-line ":"))
+                    (let [colon-idx (str/index-of trim-line ":")
+                          k-str (str/trim (str/substring trim-line 0 colon-idx))
+                          v-str (str/trim (str/substring trim-line (+ colon-idx 1) (count trim-line)))
+                          v-clean (strip-quotes v-str)
+                          v-val (if (or (= v-clean "true") (= v-clean "false")
+                                       (str/starts-with? v-clean "[")
+                                       (str/starts-with? v-clean "{"))
+                                  v-clean
+                                  (str "\"" (edn-escape v-clean) "\""))
+                          new-mod-str (str mod-str ":" k-str " " v-val " ")]
+                      (recur (rest rem) task-str new-mod-str list-key list-str acc))
+
+                    ;; Unrecognized line — skip
+                    (recur (rest rem) task-str mod-str list-key list-str acc)))))))))))
 
 (defn extract-config
   "Extracts config key-value pairs from YAML content.
@@ -70,11 +132,7 @@
                 (let [colon-idx (str/index-of trim-line ":")
                       k-str (str/trim (str/substring trim-line 0 colon-idx))
                       v-str (str/trim (str/substring trim-line (+ colon-idx 1) (count trim-line)))
-                      v-clean (if (and (str/starts-with? v-str "\"") (str/ends-with? v-str "\""))
-                                  (str/substring v-str 1 (- (count v-str) 1))
-                                  (if (and (str/starts-with? v-str "'") (str/ends-with? v-str "'"))
-                                      (str/substring v-str 1 (- (count v-str) 1))
-                                      v-str))]
+                      v-clean (strip-quotes v-str)]
                   (recur (rest rem) true (assoc cfg k-str v-clean)))
                 (recur (rest rem) in-config cfg)))))))))
 
