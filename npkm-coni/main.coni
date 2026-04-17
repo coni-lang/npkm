@@ -5,6 +5,7 @@
 (require "libs/str/src/str.coni" :as str)
 (require "lib/yaml.coni" :as yaml)
 
+
 (defn is-bw []
   (some (fn [x] (= x "-bw")) (cli/args)))
 
@@ -284,7 +285,7 @@
                 (recur (rest rem) next-curr)))))
         (throw "Template task requires src and vars (as k=v,...)")))))
 
-;; yaml-to-edn is now provided by lib/yaml.coni (yaml/yaml-to-edn)
+;; yaml-to-edn is provided by libs/yaml/src/yaml.coni (yaml/yaml-to-edn)
 
 (defn parse-playbook [file content]
   (let [is-yaml (or (str/ends-with? file ".yml") (str/ends-with? file ".yaml"))
