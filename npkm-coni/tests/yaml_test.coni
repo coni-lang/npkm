@@ -431,3 +431,41 @@
         parsed (read-string edn-str)]
     (is (= "Clone repo" (:name (first parsed))))
     (is (map? (:git (first parsed))))))
+
+;; ============================================================
+;; MULTILINE FOLDED AND QUOTED STRING TESTS
+;; ============================================================
+
+(deftest test-multiline-folded-string
+  (let [yml "tasks:\n  - name: Multiline Cmd\n    command:\n      cmd: >\n        powershell -Command\n        Write-Host 'hello'\n        exit 0"
+        edn-str (yaml/yaml-to-edn yml)
+        parsed (read-string edn-str)
+        cmd (:cmd (:command (first parsed)))]
+    (is (= "powershell -Command Write-Host 'hello' exit 0" cmd) "folded block should join lines with spaces")))
+
+(deftest test-multiline-literal-string
+  (let [yml "tasks:\n  - name: Multiline Literal\n    command:\n      cmd: |\n        echo line1\n        echo line2"
+        edn-str (yaml/yaml-to-edn yml)
+        parsed (read-string edn-str)
+        cmd (:cmd (:command (first parsed)))]
+    (is (= "echo line1\necho line2" cmd) "literal block should preserve newlines")))
+
+(deftest test-multiline-with-double-quotes-and-colons
+  (let [yml "tasks:\n  - name: Multiline complex\n    command:\n      cmd: >\n        powershell -Command\n        \"[Environment]::SetEnvironmentVariable(\n        'JAVA_HOME',\n        'C:\\Program Files',\n        'Machine'\n        )\""
+        edn-str (yaml/yaml-to-edn yml)
+        parsed (read-string edn-str)
+        cmd (:cmd (:command (first parsed)))]
+    ;; Should join with spaces, quotes and colons inside string should be perfectly captured and preserved!
+    (is (= "powershell -Command \"[Environment]::SetEnvironmentVariable( 'JAVA_HOME', 'C:\\Program Files', 'Machine' )\"" cmd))))
+
+(deftest test-edn-escape-newline
+  (let [s "hello\nworld"
+        res (yaml/edn-escape s)]
+    ;; edn-escape should escape the newline to \n for valid EDN
+    (is (= "hello\\nworld" res))))
+
+(deftest test-edn-escape-quotes
+  (let [s "hello \"world\""
+        res (yaml/edn-escape s)]
+    ;; edn-escape should escape quotes
+    (is (= "hello \\\"world\\\"" res))))

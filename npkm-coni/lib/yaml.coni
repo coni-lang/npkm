@@ -16,9 +16,35 @@
     s))
 
 (defn edn-escape
-  "Escapes backslashes in a string so it survives EDN read-string."
+  "Escapes backslashes and quotes in a string so it survives EDN read-string."
   [s]
-  (str/replace s "\\" "\\\\"))
+  (let [s1 (str/replace s "\\" "\\\\")
+        s2 (str/replace s1 "\"" "\\\"")
+        s3 (str/replace s2 "\n" "\\n")]
+    s3))
+
+(defn get-indent [s]
+  (loop [i 0 len (count s)]
+    (if (>= i len)
+      i
+      (if (not= (str/substring s i (+ i 1)) " ")
+        i
+        (recur (+ i 1) len)))))
+
+(defn consume-multiline [lines base-indent is-fold]
+  (loop [rem lines
+         acc ""]
+    (if (empty? rem)
+      [acc rem]
+      (let [line (first rem)
+            trim-l (str/trim line)]
+        (if (= trim-l "")
+          (recur (rest rem) (if is-fold (str acc " ") (str acc "\n")))
+          (let [indent (get-indent line)]
+            (if (> indent base-indent)
+              (let [sep (if is-fold " " "\n")]
+                (recur (rest rem) (if (> (count acc) 0) (str acc sep trim-l) trim-l)))
+              [acc rem])))))))
 
 (defn yaml-to-edn
   "Converts YAML playbook content to an EDN string representation.
@@ -100,14 +126,23 @@
                     (let [colon-idx (str/index-of trim-line ":")
                           k-str (str/trim (str/substring trim-line 0 colon-idx))
                           v-str (str/trim (str/substring trim-line (+ colon-idx 1) (count trim-line)))
-                          v-clean (strip-quotes v-str)
-                          v-val (if (or (= v-clean "true") (= v-clean "false")
+                          v-clean (strip-quotes v-str)]
+                      (if (or (= v-clean ">") (= v-clean "|") (= v-clean ">-") (= v-clean "|-"))
+                        (let [is-fold (str/starts-with? v-clean ">")
+                              base-indent (get-indent line)
+                              multi-res (consume-multiline (rest rem) base-indent is-fold)
+                              multi-val (first multi-res)
+                              next-rem (second multi-res)
+                              v-val (str "\"" (edn-escape multi-val) "\"")
+                              new-mod-str (str mod-str ":" k-str " " v-val " ")]
+                          (recur next-rem task-str new-mod-str list-key list-str acc))
+                        (let [v-val (if (or (= v-clean "true") (= v-clean "false")
                                        (str/starts-with? v-clean "[")
                                        (str/starts-with? v-clean "{"))
                                   v-clean
                                   (str "\"" (edn-escape v-clean) "\""))
-                          new-mod-str (str mod-str ":" k-str " " v-val " ")]
-                      (recur (rest rem) task-str new-mod-str list-key list-str acc))
+                              new-mod-str (str mod-str ":" k-str " " v-val " ")]
+                          (recur (rest rem) task-str new-mod-str list-key list-str acc))))
 
                     ;; Unrecognized line — skip
                     (recur (rest rem) task-str mod-str list-key list-str acc)))))))))))
