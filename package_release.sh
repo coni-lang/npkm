@@ -16,7 +16,7 @@ export CONI_HOME="$CONI_SRC"
 # Ensure typical paths for Go are available
 export PATH="$PATH:/usr/local/go/bin:/opt/homebrew/bin"
 
-BUILD_DATE=$(date '+%Y-%m-%d-%H%M')
+BUILD_DATE=$(TZ="Asia/Tokyo" date '+%Y-%m-%d-%H%M')
 DIST_DIR="dist"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 

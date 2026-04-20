@@ -171,8 +171,9 @@
     (let [s (:spec this)
           inline (:inline s)
           f (:file s)
-          cmd (if inline (str "pwsh -Command \"" inline "\"") (str "pwsh -File " f))
-          res (shell/sh cmd)]
+          res (if inline 
+                (shell/exec "powershell" ["-NoProfile" "-Command" inline])
+                (shell/exec "powershell" ["-NoProfile" "-File" f]))]
       (if (= (:code res) 0) (:stdout res) (throw (:stderr res))))))
 
 
@@ -368,6 +369,9 @@
               out-str (execute (constructor v))
               reg-key (if (:register interp-raw-task) (:register interp-raw-task) (if (and (map? v) (:register v)) (:register v) nil))]
           (do
+            (if (and out-str (not (= (str/trim (str out-str)) "")))
+              (println (str/trim (str out-str)))
+              nil)
             (if (is-bw)
               (println "  changed\n")
               (println "\033[32m  changed\033[0m\n"))

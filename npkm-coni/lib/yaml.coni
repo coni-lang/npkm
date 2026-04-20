@@ -181,6 +181,10 @@
         curr
         (let [k (first rem-keys)
               v (get cfg k)
-              placeholder (str "config." k)
-              next-curr (str/replace curr placeholder v)]
-          (recur (rest rem-keys) next-curr))))))
+              p1 (str "config." k)
+              p2 (str "{{ " k " }}")
+              p3 (str "{{" k "}}")
+              c1 (str/replace curr p1 v)
+              c2 (str/replace c1 p2 v)
+              c3 (str/replace c2 p3 v)]
+          (recur (rest rem-keys) c3))))))

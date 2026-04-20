@@ -357,6 +357,18 @@
         result (yaml/interpolate-config content cfg)]
     (is (= "hello Alice world" result))))
 
+(deftest test-interpolate-config-moustache
+  (let [content "hello {{ name }} and {{name}}"
+        cfg {"name" "Alice"}
+        result (yaml/interpolate-config content cfg)]
+    (is (= "hello Alice and Alice" result))))
+
+(deftest test-interpolate-config-smb-task
+  (let [content "'cmd.exe /c net use \\\\{{ server }}\\share \"\" /user:Guest'"
+        cfg {"server" "192.168.100.15"}
+        result (yaml/interpolate-config content cfg)]
+    (is (= "'cmd.exe /c net use \\\\192.168.100.15\\share \"\" /user:Guest'" result))))
+
 (deftest test-interpolate-config-multiple-keys
   (let [content "config.a and config.b"
         cfg {"a" "X" "b" "Y"}
