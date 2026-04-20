@@ -1,0 +1,138 @@
+;; === YAML-to-EDN Parser Tests ===
+;; Comprehensive tests for the yaml-to-edn conversion function
+;; Run with: coni test npkm-coni/tests
+
+(require "lib/yaml.coni" :as yaml)
+
+;; ============================================================
+;; VALUE HANDLING TESTS
+;; ============================================================
+
+(deftest test-double-quoted-values
+  (let [yml "tasks:\n  - name: Test\n    debug:\n      msg: \"Hello World\""
+        edn-str (yaml/yaml-to-edn yml)
+        parsed (read-string edn-str)]
+    (is (= "Hello World" (:msg (:debug (first parsed)))))))
+
+(deftest test-boolean-values
+  (let [yml "tasks:\n  - name: Test\n    systemd:\n      name: nginx\n      enabled: true"
+        edn-str (yaml/yaml-to-edn yml)
+        parsed (read-string edn-str)]
+    (is (= true (:enabled (:systemd (first parsed)))))))
+
+(deftest test-boolean-false
+  (let [yml "tasks:\n  - name: Test\n    systemd:\n      name: nginx\n      enabled: false"
+        edn-str (yaml/yaml-to-edn yml)
+        parsed (read-string edn-str)]
+    (is (= false (:enabled (:systemd (first parsed)))))))
+
+(deftest test-task-name-with-double-quotes
+  (let [yml "tasks:\n  - name: \"Quoted Name\"\n    debug:\n      msg: hi"
+        edn-str (yaml/yaml-to-edn yml)
+        parsed (read-string edn-str)]
+    (is (= "Quoted Name" (:name (first parsed))))))
+
+;; ============================================================  
+;; VALUES WITH COLONS (URLs, Windows paths as key:value)
+;; ============================================================
+
+(deftest test-url-value-preserved-with-colons
+  ;; url: https://example.com should keep the full URL including the protocol colon
+  (let [yml "tasks:\n  - name: Download\n    get_url:\n      url: https://example.com/file.tar.gz\n      dest: /tmp/file.tar.gz"
+        edn-str (yaml/yaml-to-edn yml)
+        parsed (read-string edn-str)
+        url-val (:url (:get_url (first parsed)))]
+    (is (= "https://example.com/file.tar.gz" url-val) "full URL with colons should be preserved")))
+
+(deftest test-windows-path-value-preserved
+  ;; A Windows path as a value like dest: C:\Program Files should keep the colon
+  (let [yml "tasks:\n  - name: Test\n    copy:\n      src: /tmp/file.txt\n      dest: C:\\Program Files\\app"
+        edn-str (yaml/yaml-to-edn yml)
+        parsed (read-string edn-str)]
+    (is (= "C:\\Program Files\\app" (:dest (:copy (first parsed)))) "Windows path with colon should be preserved")))
+
+;; ============================================================
+;; THE EXACT FAILING YAML FROM THE BUG REPORT
+;; ============================================================
+
+(deftest test-original-bug-report-yaml
+  ;; This is the exact YAML structure that crashes npkm-coni.exe with:
+  ;; "Odd number of elements in map at line 1:121"
+  (let [yml "name: Windows Development Bootstrap\nhosts: all\n\nconfig:\n  source_binaries_path: '\\\\192.168.100.15\\share\\npkm\\binaries'\n  install_dir: 'C:\\Program Files'\n\ntasks:\n  - name: Download Binaries\n    powershell:\n      file: download_binaries.ps1\n      cwd: scripts\n      params:\n        - Guest\n        - ''\n        - config.source_binaries_path\n        - 'C:\\temp\\downloads'\n\n  - name: Install Java\n    powershell:\n      file: install_java.ps1\n      cwd: scripts\n      params:\n        - 'C:\\temp\\downloads\\java\\jdk-17.0.12_windows-x64_bin.exe'\n        - config.install_dir\\Java\n        - 'jdk-17.0.12'\n\n  - name: Install Intellij\n    powershell:\n      file: install_intellij.ps1\n      cwd: scripts\n      params:\n        - 'C:\\temp\\downloads\\intellij\\idea-2026.1.exe'\n        - config.install_dir\\JetBrains\\IntelliJ IDEA"
+        cfg (yaml/extract-config yml)
+        interpolated (yaml/interpolate-config yml cfg)
+        edn-str (yaml/yaml-to-edn interpolated)
+        parsed (read-string edn-str)]
+    ;; Must parse without error
+    (is (= 3 (count parsed)) "should have 3 tasks")
+    ;; Task 1
+    (is (= "Download Binaries" (:name (first parsed))))
+    (let [ps1 (:powershell (first parsed))]
+      (is (= "download_binaries.ps1" (:file ps1)))
+      (is (= "scripts" (:cwd ps1)))
+      (is (vector? (:params ps1)) "params should be a vector")
+      (is (= 4 (count (:params ps1))) "should have 4 params"))
+    ;; Task 2
+    (is (= "Install Java" (:name (second parsed))))
+    (let [ps2 (:powershell (second parsed))]
+      (is (vector? (:params ps2)) "params should be a vector")
+      (is (= 3 (count (:params ps2))) "should have 3 params"))
+    ;; Task 3
+    (is (= "Install Intellij" (:name (nth parsed 2))))
+    (let [ps3 (:powershell (nth parsed 2))]
+      (is (vector? (:params ps3)) "params should be a vector")
+      (is (= 2 (count (:params ps3))) "should have 2 params"))))
+
+;; ============================================================
+;; EDGE CASES
+;; ============================================================
+
+(deftest test-task-name-with-special-chars
+  (let [yml "tasks:\n  - name: Install Java (JDK 17)\n    debug:\n      msg: done"
+        edn-str (yaml/yaml-to-edn yml)
+        parsed (read-string edn-str)]
+    (is (= "Install Java (JDK 17)" (:name (first parsed))))))
+
+(deftest test-value-with-spaces
+  (let [yml "tasks:\n  - name: Test\n    debug:\n      msg: hello world foo bar"
+        edn-str (yaml/yaml-to-edn yml)
+        parsed (read-string edn-str)]
+    (is (= "hello world foo bar" (:msg (:debug (first parsed)))))))
+
+(deftest test-task-with-multiple-module-keys
+  ;; A module with several key-value pairs
+  (let [yml "tasks:\n  - name: Setup\n    shell:\n      cmd: echo hello\n      cwd: /tmp"
+        edn-str (yaml/yaml-to-edn yml)
+        parsed (read-string edn-str)
+        shell-mod (:shell (first parsed))]
+    (is (= "echo hello" (:cmd shell-mod)))
+    (is (= "/tmp" (:cwd shell-mod)))))
+
+(deftest test-git-task
+  (let [yml "tasks:\n  - name: Clone repo\n    git:\n      repo: git@github.com/user/repo.git\n      dest: /opt/repo"
+        edn-str (yaml/yaml-to-edn yml)
+        parsed (read-string edn-str)]
+    (is (= "Clone repo" (:name (first parsed))))
+    (is (map? (:git (first parsed))))))
+
+(deftest test-value-with-weird-spacing
+  (let [yml "tasks:\n  - name: Spacing\n    debug:\n      msg:    spaced   out   value   "
+        edn-str (yaml/yaml-to-edn yml)
+        parsed (read-string edn-str)]
+    ;; Assuming str/trim is used on the value string
+    (is (= "spaced   out   value" (:msg (:debug (first parsed)))))))
+
+(deftest test-value-booleans-casing
+  (let [yml "tasks:\n  - name: Bools\n    systemd:\n      enabled: TRUE\n      started: false"
+        edn-str (yaml/yaml-to-edn yml)
+        parsed (read-string edn-str)]
+    ;; EDN handles bool lowercasing natively or through explicit boolean strings
+    (is (= "TRUE" (:enabled (:systemd (first parsed))))) 
+    (is (= false (:started (:systemd (first parsed)))))))
+
+(deftest test-config-with-comments
+  (let [yml "config:\n  # This is the server IP\n  server: 1.2.3.4\n  # App Dir\n  dir: /opt/app\ntasks:"
+        cfg (yaml/extract-config yml)]
+    (is (= "1.2.3.4" (get cfg "server")))
+    (is (= "/opt/app" (get cfg "dir")))
+    (is (= 2 (count cfg)))))

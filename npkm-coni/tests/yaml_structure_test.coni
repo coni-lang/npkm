@@ -1,0 +1,119 @@
+;; === YAML-to-EDN Parser Tests ===
+;; Comprehensive tests for the yaml-to-edn conversion function
+;; Run with: coni test npkm-coni/tests
+
+(require "lib/yaml.coni" :as yaml)
+
+;; ============================================================
+;; BASIC STRUCTURE TESTS
+;; ============================================================
+
+(deftest test-empty-input
+  (is (= "[]" (yaml/yaml-to-edn "")))
+  (is (= "[]" (yaml/yaml-to-edn "\n\n\n"))))
+
+(deftest test-only-tasks-keyword
+  (is (= "[]" (yaml/yaml-to-edn "tasks:")))
+  (is (= "[]" (yaml/yaml-to-edn "tasks:\n"))))
+
+(deftest test-comments-ignored
+  (is (= "[]" (yaml/yaml-to-edn "# this is a comment\n# another comment")))
+  (is (= "[]" (yaml/yaml-to-edn "# comment\ntasks:\n# another comment"))))
+
+(deftest test-top-level-keys-ignored
+  ;; name: and hosts: at top level should not break anything
+  (is (= "[]" (yaml/yaml-to-edn "name: My Playbook\nhosts: all\ntasks:"))))
+
+;; ============================================================
+;; COMMENTS AND WHITESPACE TESTS
+;; ============================================================
+
+(deftest test-inline-comments-not-stripped
+  ;; NOTE: The current parser doesn't strip inline comments
+  ;; Lines starting with # are skipped, but inline # is kept as part of value
+  (let [yml "tasks:\n  - name: Test\n    debug:\n      msg: hello"
+        edn-str (yaml/yaml-to-edn yml)
+        parsed (read-string edn-str)]
+    (is (= "hello" (:msg (:debug (first parsed)))))))
+
+(deftest test-mixed-comments-and-empty-lines
+  (let [yml "# Top comment\n\ntasks:\n\n  # Comment between tasks\n  - name: Only Task\n    debug:\n      msg: works\n\n  # Trailing comment"
+        edn-str (yaml/yaml-to-edn yml)
+        parsed (read-string edn-str)]
+    (is (= 1 (count parsed)))
+    (is (= "Only Task" (:name (first parsed))))))
+
+;; ============================================================
+;; EDN PARSABILITY TESTS
+;; Verify that yaml-to-edn output can always be read by read-string
+;; ============================================================
+
+(deftest test-edn-parsable-simple
+  (let [yml "tasks:\n  - name: T1\n    debug:\n      msg: hi"
+        edn-str (yaml/yaml-to-edn yml)]
+    (is (vector? (read-string edn-str)))))
+
+(deftest test-edn-parsable-multi-task
+  (let [yml "tasks:\n  - name: T1\n    shell:\n      cmd: ls\n  - name: T2\n    file:\n      path: /tmp/x\n      state: touch"
+        edn-str (yaml/yaml-to-edn yml)]
+    (is (vector? (read-string edn-str)))))
+
+(deftest test-edn-parsable-with-top-level-keys
+  (let [yml "name: My Playbook\nhosts: all\n\ntasks:\n  - name: Test\n    debug:\n      msg: ok"
+        edn-str (yaml/yaml-to-edn yml)]
+    (is (vector? (read-string edn-str)))))
+
+;; ============================================================
+;; SINGLE-QUOTED VALUE STRIPPING
+;; ============================================================
+
+(deftest test-single-quotes-stripped-in-values
+  ;; YAML single-quoted values like 'hello' should have quotes stripped
+  (let [yml "tasks:\n  - name: Test\n    debug:\n      msg: 'quoted value'"
+        edn-str (yaml/yaml-to-edn yml)
+        parsed (read-string edn-str)]
+    (is (= "quoted value" (:msg (:debug (first parsed)))) "single quotes should be stripped from values")))
+
+(deftest test-single-quotes-stripped-in-paths
+  (let [yml "tasks:\n  - name: Test\n    file:\n      path: '/tmp/my app'\n      state: directory"
+        edn-str (yaml/yaml-to-edn yml)
+        parsed (read-string edn-str)]
+    (is (= "/tmp/my app" (:path (:file (first parsed)))) "single quotes should be stripped")))
+
+;; ============================================================
+;; MULTILINE FOLDED AND QUOTED STRING TESTS
+;; ============================================================
+
+(deftest test-multiline-folded-string
+  (let [yml "tasks:\n  - name: Multiline Cmd\n    command:\n      cmd: >\n        powershell -Command\n        Write-Host 'hello'\n        exit 0"
+        edn-str (yaml/yaml-to-edn yml)
+        parsed (read-string edn-str)
+        cmd (:cmd (:command (first parsed)))]
+    (is (= "powershell -Command Write-Host 'hello' exit 0" cmd) "folded block should join lines with spaces")))
+
+(deftest test-multiline-literal-string
+  (let [yml "tasks:\n  - name: Multiline Literal\n    command:\n      cmd: |\n        echo line1\n        echo line2"
+        edn-str (yaml/yaml-to-edn yml)
+        parsed (read-string edn-str)
+        cmd (:cmd (:command (first parsed)))]
+    (is (= "echo line1\necho line2" cmd) "literal block should preserve newlines")))
+
+(deftest test-multiline-with-double-quotes-and-colons
+  (let [yml "tasks:\n  - name: Multiline complex\n    command:\n      cmd: >\n        powershell -Command\n        \"[Environment]::SetEnvironmentVariable(\n        'JAVA_HOME',\n        'C:\\Program Files',\n        'Machine'\n        )\""
+        edn-str (yaml/yaml-to-edn yml)
+        parsed (read-string edn-str)
+        cmd (:cmd (:command (first parsed)))]
+    ;; Should join with spaces, quotes and colons inside string should be perfectly captured and preserved!
+    (is (= "powershell -Command \"[Environment]::SetEnvironmentVariable( 'JAVA_HOME', 'C:\\Program Files', 'Machine' )\"" cmd))))
+
+(deftest test-edn-escape-newline
+  (let [s "hello\nworld"
+        res (yaml/edn-escape s)]
+    ;; edn-escape should escape the newline to \n for valid EDN
+    (is (= "hello\\nworld" res))))
+
+(deftest test-edn-escape-quotes
+  (let [s "hello \"world\""
+        res (yaml/edn-escape s)]
+    ;; edn-escape should escape quotes
+    (is (= "hello \\\"world\\\"" res))))

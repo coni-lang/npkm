@@ -1,0 +1,96 @@
+;; === YAML-to-EDN Parser Tests ===
+;; Comprehensive tests for the yaml-to-edn conversion function
+;; Run with: coni test npkm-coni/tests
+
+(require "lib/yaml.coni" :as yaml)
+
+;; ============================================================
+;; EXTRACT-CONFIG TESTS
+;; ============================================================
+
+(deftest test-extract-config-empty
+  (let [cfg (yaml/extract-config "tasks:\n  - name: Test\n    debug:\n      msg: hi")]
+    (is (= {} cfg))))
+
+(deftest test-extract-config-basic
+  (let [cfg (yaml/extract-config "config:\n  key1: value1\n  key2: value2\n\ntasks:")]
+    (is (= "value1" (get cfg "key1")))
+    (is (= "value2" (get cfg "key2")))))
+
+(deftest test-extract-config-double-quoted
+  (let [cfg (yaml/extract-config "config:\n  dir: \"C:\\Program Files\"\n\ntasks:")]
+    (is (= "C:\\Program Files" (get cfg "dir")))))
+
+(deftest test-extract-config-single-quoted
+  (let [cfg (yaml/extract-config "config:\n  dir: 'C:\\Program Files'\n\ntasks:")]
+    (is (= "C:\\Program Files" (get cfg "dir")))))
+
+(deftest test-extract-config-stops-at-tasks
+  (let [cfg (yaml/extract-config "config:\n  a: 1\ntasks:\n  - name: Test\n    debug:\n      msg: hi")]
+    (is (= "1" (get cfg "a")))
+    (is (= nil (get cfg "msg")))))
+
+;; ============================================================
+;; INTERPOLATE-CONFIG TESTS
+;; ============================================================
+
+(deftest test-interpolate-config-basic
+  (let [content "hello config.name world"
+        cfg {"name" "Alice"}
+        result (yaml/interpolate-config content cfg)]
+    (is (= "hello Alice world" result))))
+
+(deftest test-interpolate-config-moustache
+  (let [content "hello {{ name }} and {{name}}"
+        cfg {"name" "Alice"}
+        result (yaml/interpolate-config content cfg)]
+    (is (= "hello Alice and Alice" result))))
+
+(deftest test-interpolate-config-smb-task
+  (let [content "'cmd.exe /c net use \\\\{{ server }}\\share \"\" /user:Guest'"
+        cfg {"server" "192.168.100.15"}
+        result (yaml/interpolate-config content cfg)]
+    (is (= "'cmd.exe /c net use \\\\192.168.100.15\\share \"\" /user:Guest'" result))))
+
+(deftest test-interpolate-config-multiple-keys
+  (let [content "config.a and config.b"
+        cfg {"a" "X" "b" "Y"}
+        result (yaml/interpolate-config content cfg)]
+    (is (= "X and Y" result))))
+
+(deftest test-interpolate-config-no-match
+  (let [content "no placeholders here"
+        cfg {"key" "val"}
+        result (yaml/interpolate-config content cfg)]
+    (is (= "no placeholders here" result))))
+
+(deftest test-interpolate-config-empty-cfg
+  (let [result (yaml/interpolate-config "config.x stays" {})]
+    (is (= "config.x stays" result))))
+
+(deftest test-interpolate-config-windows-path
+  (let [content "install to config.install_dir\\Java"
+        cfg {"install_dir" "C:\\Program Files"}
+        result (yaml/interpolate-config content cfg)]
+    (is (= "install to C:\\Program Files\\Java" result))))
+
+;; ============================================================
+;; FULL PIPELINE INTEGRATION TESTS
+;; (extract-config -> interpolate-config -> yaml-to-edn -> read-string)
+;; ============================================================
+
+(deftest test-pipeline-simple-config-interpolation
+  (let [yml "config:\n  msg: Hello from config\n\ntasks:\n  - name: Greet\n    debug:\n      msg: config.msg"
+        cfg (yaml/extract-config yml)
+        interpolated (yaml/interpolate-config yml cfg)
+        edn-str (yaml/yaml-to-edn interpolated)
+        parsed (read-string edn-str)]
+    (is (= "Hello from config" (:msg (:debug (first parsed)))))))
+
+(deftest test-pipeline-config-in-path
+  (let [yml "config:\n  base: /opt/app\n\ntasks:\n  - name: Create dir\n    file:\n      path: config.base/data\n      state: directory"
+        cfg (yaml/extract-config yml)
+        interpolated (yaml/interpolate-config yml cfg)
+        edn-str (yaml/yaml-to-edn interpolated)
+        parsed (read-string edn-str)]
+    (is (= "/opt/app/data" (:path (:file (first parsed)))))))
