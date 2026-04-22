@@ -5,6 +5,30 @@
 (require "libs/str/src/str.coni" :as str)
 (require "lib/yaml.coni" :as yaml)
 
+;; --- Platform helpers (compile-time, like Rust cfg) ---
+(def *os* (sys-os-name))
+(def win? (= *os* "windows"))
+(def mac? (= *os* "darwin"))
+
+#[cfg(windows)]
+(defn copy-dir [src dest]
+  (let [res (shell/sh (str "xcopy /E /I /Y \"" src "\" \"" dest "\""))]
+    (if (= (:code res) 0) nil (throw (:stderr res)))))
+
+#[cfg(not windows)]
+(defn copy-dir [src dest]
+  (let [res (shell/sh (str "cp -R " src " " dest))]
+    (if (= (:code res) 0) nil (throw (:stderr res)))))
+
+#[cfg(windows)]
+(defn format-date [path]
+  (str/trim (:stdout (shell/sh (str "powershell -Command \"(Get-Item '" path "').LastWriteTime.ToString('o')\"")))))
+
+#[cfg(not windows)]
+(defn format-date [path]
+  (let [res (shell/sh (str "date -r \"" path "\" '+%Y-%m-%dT%H:%M:%S%z' 2>/dev/null || stat -c %y \"" path "\" 2>/dev/null"))]
+    (str/trim (:stdout res))))
+
 
 (defn is-bw []
   (some (fn [x] (= x "-bw")) (cli/args)))
@@ -82,8 +106,11 @@
   PlaybookTask
   (execute [this]
     (let [s (:spec this)
-          res (shell/sh (str "cp -R " (:src s) " " (:dest s)))]
-      (if (= (:code res) 0) nil (throw (:stderr res))))))
+          src (:src s)
+          dest (:dest s)]
+      (if (io/directory? src)
+        (copy-dir src dest)
+        (do (io/copy src dest) nil)))))
 
 (defrecord RemoveTask [spec]
   PlaybookTask
@@ -121,7 +148,9 @@
   PlaybookTask
   (execute [this]
     (let [s (:spec this)
-          cmd (str "mv " (:src s) " " (:dest s))
+          cmd (if win?
+                (str "move \"" (:src s) "\" \"" (:dest s) "\"")
+                (str "mv " (:src s) " " (:dest s)))
           res (shell/sh cmd)]
       (if (= (:code res) 0) nil (throw (str "Exit code " (:code res) " : " (:stderr res)))))))
 
@@ -137,17 +166,45 @@
   PlaybookTask
   (execute [this]
     (let [s (:spec this)
-          cmd (str "echo \"" (:line s) "\" >> " (:path s))
-          res (shell/sh cmd)]
-      (if (= (:code res) 0) nil (throw (:stderr res))))))
+          path (:path s)
+          line (:line s)
+          pattern (:regexp s)]
+      (if pattern
+        ;; Regexp mode: find and replace matching lines, or append if no match
+        (let [content (if (io/exists? path) (io/read-file path) "")
+              lines (str/split content "\n")
+              result (loop [rem lines
+                            acc []
+                            matched false]
+                       (if (empty? rem)
+                         {:lines acc :matched matched}
+                         (let [cur (first rem)]
+                           (if (sys-regex-match pattern cur)
+                             (recur (rest rem) (conj acc line) true)
+                             (recur (rest rem) (conj acc cur) matched)))))
+              final-lines (if (:matched result)
+                            (:lines result)
+                            (conj (:lines result) line))
+              new-content (str/join "\n" final-lines)]
+          (io/write-file path new-content)
+          nil)
+        ;; No regexp: just append the line
+        (let [existing (if (io/exists? path) (io/read-file path) "")
+              new-content (str existing line "\n")]
+          (io/write-file path new-content)
+          nil)))))
 
 (defrecord ReplaceTask [spec]
   PlaybookTask
   (execute [this]
     (let [s (:spec this)
-          cmd (str "sed -i.bak 's/" (:regexp s) "/" (:replace s) "/g' " (:path s))
-          res (shell/sh cmd)]
-      (if (= (:code res) 0) nil (throw (:stderr res))))))
+          path (:path s)
+          pattern (:regexp s)
+          replacement (:replace s)
+          content (io/read-file path)
+          new-content (str/replace-regex content pattern replacement)]
+      (io/write-file path new-content)
+      nil)))
 
 (defrecord SystemdTask [spec]
   PlaybookTask
@@ -161,7 +218,9 @@
   PlaybookTask
   (execute [this]
     (let [s (:spec this)
-          cmd (str "echo 'export PATH=\"$PATH:" (:path s) "\"' >> ~/.bashrc")
+          cmd (if win?
+                (str "powershell -Command \"[Environment]::SetEnvironmentVariable('PATH', $env:PATH + ';" (:path s) "', 'User')\"")
+                (str "echo 'export PATH=\"$PATH:" (:path s) "\"' >> ~/.bashrc"))
           res (shell/sh cmd)]
       (if (= (:code res) 0) nil (throw (:stderr res))))))
 
@@ -182,9 +241,11 @@
   (execute [this]
     (let [s (:spec this)
           format (if (:format s) (:format s) "tar")
-          cmd (if (= format "zip")
-                (str "cd \"$(dirname '" (:src s) "')\" && zip -r '" (:dest s) "' \"$(basename '" (:src s) "')\"")
-                (str "tar -czf '" (:dest s) "' -C \"$(dirname '" (:src s) "')\" \"$(basename '" (:src s) "')\""))
+          cmd (if win?
+                (str "powershell -Command \"Compress-Archive -Path '" (:src s) "' -DestinationPath '" (:dest s) "' -Force\"")
+                (if (= format "zip")
+                  (str "cd \"$(dirname '" (:src s) "')\" && zip -r '" (:dest s) "' \"$(basename '" (:src s) "')\"")
+                  (str "tar -czf '" (:dest s) "' -C \"$(dirname '" (:src s) "')\" \"$(basename '" (:src s) "')\"")))
           res (shell/sh cmd)]
       (if (= (:code res) 0) nil (throw (:stderr res))))))
 
@@ -192,9 +253,6 @@
   PlaybookTask
   (execute [this]
     (let [s (:spec this)
-          os-res (shell/sh "uname -s")
-          os-name (str/trim (if (= (:code os-res) 0) (:stdout os-res) ""))
-          win? (= os-name "")
           state (:state s)
           cmd (if win?
                 (if (= state "absent") (str "choco uninstall -y " (:name s)) (str "choco install -y " (:name s)))
@@ -212,10 +270,7 @@
 (defrecord CronTask [spec]
   PlaybookTask
   (execute [this]
-    (let [s (:spec this)
-          os-res (shell/sh "uname -s")
-          os-name (str/trim (if (= (:code os-res) 0) (:stdout os-res) ""))
-          win? (= os-name "")]
+    (let [s (:spec this)]
       (if win?
         (throw "Cron task not natively supported on Windows via npkm yet")
         (let [marker (str "# NPKM: " (:name s))
@@ -231,10 +286,6 @@
   PlaybookTask
   (execute [this]
     (let [s (:spec this)
-          os-res (shell/sh "uname -s")
-          os-name (str/trim (if (= (:code os-res) 0) (:stdout os-res) ""))
-          mac? (= os-name "Darwin")
-          win? (= os-name "")
           state (:state s)
           cmd (if win?
                 (let [action (if (= state "stopped") "stop" "start")]
@@ -251,10 +302,6 @@
   PlaybookTask
   (execute [this]
     (let [s (:spec this)
-          os-res (shell/sh "uname -s")
-          os-name (str/trim (if (= (:code os-res) 0) (:stdout os-res) ""))
-          mac? (= os-name "Darwin")
-          win? (= os-name "")
           state (:state s)
           cmd (if win?
                 (if (= state "absent") (str "net user " (:name s) " /delete") (str "net user " (:name s) " /add"))
@@ -310,14 +357,7 @@
 
 
 
-(defn format-date [path]
-  (let [os-res (shell/sh "uname -s")
-        os-name (str/trim (if (= (:code os-res) 0) (:stdout os-res) ""))
-        win? (= os-name "")]
-    (if win?
-      (str/trim (:stdout (shell/sh (str "powershell -Command \"(Get-Item '" path "').LastWriteTime.ToString('o')\""))))
-      (let [res (shell/sh (str "date -r \"" path "\" '+%Y-%m-%dT%H:%M:%S%z' 2>/dev/null || stat -c %y \"" path "\" 2>/dev/null"))]
-         (str/trim (:stdout res))))))
+;; format-date is now defined via #[cfg] at the top of the file
 
 (def playbook-task-registry
   {:shell ShellTask

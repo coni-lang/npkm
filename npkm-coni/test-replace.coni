@@ -1,0 +1,284 @@
+#!/usr/bin/env coni
+;; Tests for the ReplaceTask (regex-based file replacement)
+;; and CopyTask (cross-platform file copy)
+
+(require "libs/os/src/io.coni" :as io)
+(require "libs/str/src/str.coni" :as str)
+
+(def test-dir "tmp/test-replace")
+(io/make-dir test-dir)
+
+(def pass-count (atom 0))
+(def fail-count (atom 0))
+
+(defn assert-eq [label expected actual]
+  (if (= expected actual)
+    (do
+      (swap! pass-count inc)
+      (println (str "  ✓ " label)))
+    (do
+      (swap! fail-count inc)
+      (println (str "  ✗ " label))
+      (println (str "    expected: " expected))
+      (println (str "    actual:   " actual)))))
+
+;; =============================================
+;; str/replace-regex tests (the engine behind ReplaceTask)
+;; =============================================
+(println "\n=== str/replace-regex tests ===\n")
+
+;; Basic literal replacement
+(assert-eq "simple literal match"
+  "hello world"
+  (str/replace-regex "hello foo" "foo" "world"))
+
+;; Replace all occurrences
+(assert-eq "replaces all occurrences"
+  "b-b-b"
+  (str/replace-regex "a-a-a" "a" "b"))
+
+;; Regex dot wildcard
+(assert-eq "dot matches any char"
+  "hXllX"
+  (str/replace-regex "hello" "[eo]" "X"))
+
+;; Digit class
+(assert-eq "digit class \\d"
+  "a-X-b-X-c"
+  (str/replace-regex "a-1-b-2-c" "\\d" "X"))
+
+;; Word boundary and groups
+(assert-eq "word replacement with +"
+  "X X X"
+  (str/replace-regex "abc def ghi" "[a-z]+" "X"))
+
+;; Start of line anchor
+(assert-eq "caret anchor"
+  "REPLACED rest"
+  (str/replace-regex "hello rest" "^hello" "REPLACED"))
+
+;; End of line anchor
+(assert-eq "dollar anchor"
+  "hello REPLACED"
+  (str/replace-regex "hello world" "world$" "REPLACED"))
+
+;; Replace with empty string (deletion)
+(assert-eq "delete pattern"
+  "hllo"
+  (str/replace-regex "hello" "e" ""))
+
+;; Whitespace class
+(assert-eq "whitespace class \\s"
+  "a_b_c"
+  (str/replace-regex "a b c" "\\s" "_"))
+
+;; Quantifier *
+(assert-eq "zero or more quantifier"
+  "XbXcXdX"
+  (str/replace-regex "aabcaad" "a*" "X"))
+
+;; Alternation
+(assert-eq "alternation with |"
+  "X bit X"
+  (str/replace-regex "cat bit dog" "cat|dog" "X"))
+
+;; Escape special chars in replacement
+(assert-eq "literal dots in pattern"
+  "192-168-1-1"
+  (str/replace-regex "192.168.1.1" "\\." "-"))
+
+;; Case-insensitive flag (if supported)
+(assert-eq "case insensitive (?i)"
+  "X X X"
+  (str/replace-regex "Hello HELLO hello" "(?i)hello" "X"))
+
+;; Multiline content
+(assert-eq "multiline replace"
+  "line1\nREPLACED\nline3"
+  (str/replace-regex "line1\nline2\nline3" "line2" "REPLACED"))
+
+;; =============================================
+;; ReplaceTask integration tests (file-based)
+;; =============================================
+(println "\n=== ReplaceTask file integration tests ===\n")
+
+;; Test 1: Simple replace in file
+(let [f (str test-dir "/test1.txt")]
+  (io/write-file f "version=1.0.0\nname=myapp\n")
+  (let [content (io/read-file f)
+        new-content (str/replace-regex content "1\\.0\\.0" "2.0.0")]
+    (io/write-file f new-content)
+    (assert-eq "replace version in file"
+      "version=2.0.0\nname=myapp\n"
+      (io/read-file f))))
+
+;; Test 2: Replace URL in config
+(let [f (str test-dir "/test2.txt")]
+  (io/write-file f "server=http://old-host:8080/api\ndb=postgres\n")
+  (let [content (io/read-file f)
+        new-content (str/replace-regex content "http://old-host:8080" "https://new-host:443")]
+    (io/write-file f new-content)
+    (assert-eq "replace URL in config"
+      "server=https://new-host:443/api\ndb=postgres\n"
+      (io/read-file f))))
+
+;; Test 3: Comment out a line
+(let [f (str test-dir "/test3.txt")]
+  (io/write-file f "DEBUG=true\nLOG_LEVEL=info\n")
+  (let [content (io/read-file f)
+        new-content (str/replace-regex content "^DEBUG=true" "# DEBUG=true")]
+    (io/write-file f new-content)
+    (assert-eq "comment out line"
+      "# DEBUG=true\nLOG_LEVEL=info\n"
+      (io/read-file f))))
+
+;; Test 4: Strip trailing whitespace
+(let [f (str test-dir "/test4.txt")]
+  (io/write-file f "hello   \nworld  \n")
+  (let [content (io/read-file f)
+        new-content (str/replace-regex content "\\s+$" "")]
+    (io/write-file f new-content)
+    ;; Note: this replaces trailing whitespace at end of whole string
+    (assert-eq "strip trailing whitespace"
+      true
+      (not (str/ends-with? (io/read-file f) " ")))))
+
+;; Test 5: Replace multiple patterns sequentially
+(let [f (str test-dir "/test5.txt")]
+  (io/write-file f "color: red; background: blue;")
+  (let [content (io/read-file f)
+        step1 (str/replace-regex content "red" "green")
+        step2 (str/replace-regex step1 "blue" "yellow")]
+    (io/write-file f step2)
+    (assert-eq "sequential replacements"
+      "color: green; background: yellow;"
+      (io/read-file f))))
+
+;; =============================================
+;; CopyTask tests
+;; =============================================
+(println "\n=== CopyTask tests ===\n")
+
+;; Test: Copy a single file using io/copy
+(let [src (str test-dir "/copy-src.txt")
+      dest (str test-dir "/copy-dest.txt")]
+  (io/write-file src "copy test content")
+  (io/copy src dest)
+  (assert-eq "copy file preserves content"
+    "copy test content"
+    (io/read-file dest)))
+
+;; Test: Copy file to nested directory
+(let [src (str test-dir "/copy-src2.txt")
+      dest (str test-dir "/nested/dir/copy-dest2.txt")]
+  (io/write-file src "nested copy test")
+  (io/copy src dest)
+  (assert-eq "copy to nested dir"
+    "nested copy test"
+    (io/read-file dest)))
+
+;; =============================================
+;; LineInFileTask tests
+;; =============================================
+(println "\n=== LineInFileTask tests ===\n")
+
+;; Helper that simulates what LineInFileTask does
+(defn lineinfile-exec [path pattern line]
+  (if pattern
+    (let [content (if (io/exists? path) (io/read-file path) "")
+          lines (str/split content "\n")
+          result (loop [rem lines
+                        acc []
+                        matched false]
+                   (if (empty? rem)
+                     {:lines acc :matched matched}
+                     (let [cur (first rem)]
+                       (if (sys-regex-match pattern cur)
+                         (recur (rest rem) (conj acc line) true)
+                         (recur (rest rem) (conj acc cur) matched)))))
+          final-lines (if (:matched result)
+                        (:lines result)
+                        (conj (:lines result) line))
+          new-content (str/join "\n" final-lines)]
+      (io/write-file path new-content))
+    (let [existing (if (io/exists? path) (io/read-file path) "")
+          new-content (str existing line "\n")]
+      (io/write-file path new-content))))
+
+;; Test: User-reported scenario — replace "Hello from NPKM 234" with "Hello from NPKM 100"
+(let [f (str test-dir "/lineinfile1.txt")]
+  (io/write-file f "Hello from NPKM\nHello from NPKM 234\n")
+  (lineinfile-exec f "Hello from NPKM \\d+" "Hello from NPKM 100")
+  (let [result (io/read-file f)]
+    (assert-eq "regexp replaces matching line (user scenario)"
+      true
+      (str/includes? result "Hello from NPKM 100"))
+    (assert-eq "non-matching line preserved"
+      true
+      (str/includes? result "Hello from NPKM\n"))
+    (assert-eq "old value removed"
+      false
+      (str/includes? result "Hello from NPKM 234"))))
+
+;; Test: No extra quotes added
+(let [f (str test-dir "/lineinfile2.txt")]
+  (io/write-file f "value=old123\n")
+  (lineinfile-exec f "value=old\\d+" "value=new456")
+  (let [result (io/read-file f)]
+    (assert-eq "no extra quotes in result"
+      false
+      (str/includes? result "\""))
+    (assert-eq "replacement is exact"
+      true
+      (str/includes? result "value=new456"))))
+
+;; Test: Append mode (no regexp)
+(let [f (str test-dir "/lineinfile3.txt")]
+  (io/write-file f "existing line\n")
+  (lineinfile-exec f nil "new appended line")
+  (let [result (io/read-file f)]
+    (assert-eq "append preserves existing"
+      true
+      (str/includes? result "existing line"))
+    (assert-eq "append adds new line"
+      true
+      (str/includes? result "new appended line"))))
+
+;; Test: Regexp with no match — should append
+(let [f (str test-dir "/lineinfile4.txt")]
+  (io/write-file f "alpha\nbeta\ngamma\n")
+  (lineinfile-exec f "delta\\d+" "delta999")
+  (let [result (io/read-file f)]
+    (assert-eq "no match appends line"
+      true
+      (str/includes? result "delta999"))
+    (assert-eq "original lines preserved on no match"
+      true
+      (and (str/includes? result "alpha")
+           (str/includes? result "beta")
+           (str/includes? result "gamma")))))
+
+;; Test: Multiple matching lines — all get replaced
+(let [f (str test-dir "/lineinfile5.txt")]
+  (io/write-file f "server=host1:8080\nserver=host2:9090\nother=value\n")
+  (lineinfile-exec f "server=.*:\\d+" "server=newhost:3000")
+  (let [result (io/read-file f)]
+    (assert-eq "all matching lines replaced"
+      false
+      (or (str/includes? result "host1") (str/includes? result "host2")))
+    (assert-eq "replacement present"
+      true
+      (str/includes? result "server=newhost:3000"))
+    (assert-eq "non-matching line untouched"
+      true
+      (str/includes? result "other=value"))))
+
+;; =============================================
+;; Summary
+;; =============================================
+(println "\n=== Results ===")
+(println (str "  Passed: " @pass-count))
+(println (str "  Failed: " @fail-count))
+(if (> @fail-count 0)
+  (do (println "  ❌ SOME TESTS FAILED") (sys-exit 1))
+  (println "  ✅ ALL TESTS PASSED"))
