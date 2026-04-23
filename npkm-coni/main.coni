@@ -99,36 +99,64 @@
   PlaybookTask
   (execute [this]
     (if (is-bw)
-      (println "  msg:" (:msg (:spec this)))
-      (println "\033[35m  msg:" (:msg (:spec this)) "\033[0m"))))
+      (println (:msg (:spec this)))
+      (println "\033[35m" (:msg (:spec this)) "\033[0m"))))
 
 (defrecord CopyTask [spec]
   PlaybookTask
   (execute [this]
     (let [s (:spec this)
-          src (:src s)
-          dest (:dest s)]
+          src (str/trim-end (:src s) "/\\")
+          dest (str/trim-end (:dest s) "/\\")]
       (if (io/directory? src)
-        (copy-dir src dest)
+        ;; Native recursive copy — no shell dependency
+        (let [entries (io/file-seq src)]
+          (loop [rem entries]
+            (if (empty? rem)
+              nil
+              (let [e (first rem)
+                    rel (subs e (count src) (count e))
+                    target (str dest rel)]
+                (if (io/directory? e)
+                  (io/make-dir target)
+                  (io/copy e target))
+                (recur (rest rem))))))
         (do (io/copy src dest) nil)))))
 
 (defrecord RemoveTask [spec]
   PlaybookTask
   (execute [this]
-    (io/delete-file (:path (:spec this)))))
+    (let [path (:path (:spec this))]
+      (if (str/includes? path "*")
+        ;; Glob mode: delete each entry inside the parent directory
+        (let [sep-idx (max (str/last-index-of path "/")
+                           (str/last-index-of path "\\"))
+              dir (if (> sep-idx 0) (subs path 0 sep-idx) ".")
+              entries (io/read-dir dir)]
+          (loop [rem entries]
+            (if (empty? rem)
+              nil
+              (do
+                (io/delete-file (str dir "/" (first rem)))
+                (recur (rest rem))))))
+        (io/delete-file path)))))
 
 (defrecord FailTask [spec]
   PlaybookTask
   (execute [this]
-    (throw (:msg (:spec this)))))
+    (let [msg (if (:msg (:spec this)) (:msg (:spec this)) "Task failed")]
+      (if (is-bw)
+        (println "  FAILED:" msg)
+        (println "\033[31m  FAILED:" msg "\033[0m"))
+      (throw msg))))
 
 (defrecord UnzipTask [spec]
   PlaybookTask
   (execute [this]
-    (let [s (:spec this)
-          cmd (str "unzip -q -o " (:src s) " -d " (:dest s))
-          res (shell/sh cmd)]
-      (if (= (:code res) 0) nil (throw (str "Exit code " (:code res) " : " (:stderr res)))))))
+    (let [s (:spec this)]
+      (io/make-dir (:dest s))
+      (sys-unzip (:src s) (:dest s))
+      nil)))
 
 (defrecord GitTask [spec]
   PlaybookTask
@@ -147,12 +175,10 @@
 (defrecord MoveTask [spec]
   PlaybookTask
   (execute [this]
-    (let [s (:spec this)
-          cmd (if win?
-                (str "move \"" (:src s) "\" \"" (:dest s) "\"")
-                (str "mv " (:src s) " " (:dest s)))
-          res (shell/sh cmd)]
-      (if (= (:code res) 0) nil (throw (str "Exit code " (:code res) " : " (:stderr res)))))))
+    (let [s (:spec this)]
+      (io/make-parents (:dest s))
+      (sys-file-rename (:src s) (:dest s))
+      nil)))
 
 (defrecord GetUrlTask [spec]
   PlaybookTask
@@ -218,11 +244,11 @@
   PlaybookTask
   (execute [this]
     (let [s (:spec this)
-          cmd (if win?
-                (str "powershell -Command \"[Environment]::SetEnvironmentVariable('PATH', $env:PATH + ';" (:path s) "', 'User')\"")
-                (str "echo 'export PATH=\"$PATH:" (:path s) "\"' >> ~/.bashrc"))
-          res (shell/sh cmd)]
-      (if (= (:code res) 0) nil (throw (:stderr res))))))
+          new-path (:path s)
+          sep (if win? ";" ":")
+          current (sys-env-get "PATH")]
+      (sys-env-set "PATH" (str current sep new-path))
+      nil)))
 
 (defrecord PowershellTask [spec]
   PlaybookTask
@@ -240,23 +266,32 @@
   PlaybookTask
   (execute [this]
     (let [s (:spec this)
-          format (if (:format s) (:format s) "tar")
-          cmd (if win?
-                (str "powershell -Command \"Compress-Archive -Path '" (:src s) "' -DestinationPath '" (:dest s) "' -Force\"")
-                (if (= format "zip")
-                  (str "cd \"$(dirname '" (:src s) "')\" && zip -r '" (:dest s) "' \"$(basename '" (:src s) "')\"")
-                  (str "tar -czf '" (:dest s) "' -C \"$(dirname '" (:src s) "')\" \"$(basename '" (:src s) "')\"")))
-          res (shell/sh cmd)]
-      (if (= (:code res) 0) nil (throw (:stderr res))))))
+          format (if (:format s) (:format s) "zip")]
+      (if (or (= format "zip") win?)
+        ;; Use native zip
+        (do (sys-zip (:src s) (:dest s)) nil)
+        ;; For tar on unix, fall back to shell
+        (let [cmd (str "tar -czf '" (:dest s) "' -C \"$(dirname '" (:src s) "')\" \"$(basename '" (:src s) "')\"")
+              res (shell/sh cmd)]
+          (if (= (:code res) 0) nil (throw (:stderr res))))))))
 
 (defrecord PackageTask [spec]
   PlaybookTask
   (execute [this]
     (let [s (:spec this)
           state (:state s)
+          mgr (if (:manager s) (:manager s) nil)
           cmd (if win?
-                (if (= state "absent") (str "choco uninstall -y " (:name s)) (str "choco install -y " (:name s)))
-                (let [pkg-mgr (str/trim (:stdout (shell/sh "if command -v brew >/dev/null 2>&1; then echo brew; elif command -v apt-get >/dev/null 2>&1; then echo apt-get; elif command -v yum >/dev/null 2>&1; then echo yum; fi")))]
+                ;; Windows: try winget first (or specified manager), then choco fallback
+                (let [use-mgr (if mgr mgr "winget")]
+                  (if (= use-mgr "choco")
+                    (if (= state "absent") (str "choco uninstall -y " (:name s)) (str "choco install -y " (:name s)))
+                    (if (= state "absent")
+                      (str "winget uninstall --id " (:name s) " --silent")
+                      (str "winget install --id " (:name s) " --silent --accept-package-agreements --accept-source-agreements"))))
+                ;; Unix: detect package manager
+                (let [pkg-mgr (if mgr mgr
+                                (str/trim (:stdout (shell/sh "if command -v brew >/dev/null 2>&1; then echo brew; elif command -v apt-get >/dev/null 2>&1; then echo apt-get; elif command -v yum >/dev/null 2>&1; then echo yum; fi"))))]
                   (if (= pkg-mgr "brew")
                     (if (= state "absent") (str "brew uninstall " (:name s)) (str "brew install " (:name s)))
                   (if (= pkg-mgr "apt-get")
@@ -265,7 +300,12 @@
                     (if (= state "absent") (str "yum remove -y " (:name s)) (str "yum install -y " (:name s)))
                     "echo 'No package manager found' && exit 1")))))
           res (shell/sh cmd)]
-      (if (= (:code res) 0) nil (throw (:stderr res))))))
+      ;; On Windows, if winget fails and no manager specified, try choco
+      (if (and win? (not= (:code res) 0) (nil? mgr))
+        (let [choco-cmd (if (= state "absent") (str "choco uninstall -y " (:name s)) (str "choco install -y " (:name s)))
+              res2 (shell/sh choco-cmd)]
+          (if (= (:code res2) 0) nil (throw (:stderr res2))))
+        (if (= (:code res) 0) nil (throw (:stderr res)))))))
 
 (defrecord CronTask [spec]
   PlaybookTask
@@ -318,20 +358,42 @@
           content (io/read-file (:src s))
           vars (:vars s)]
       (if (and vars content)
-        (let [keys (str/split vars ",")]
-          (loop [rem keys
-                 curr content]
-            (if (empty? rem)
-              (do
-                (io/write-file (:dest s) curr)
-                nil)
-              (let [pair (str/split (first rem) "=")
-                    k (str/trim (if (> (count pair) 0) (first pair) ""))
-                    v (str/trim (if (> (count pair) 1) (second pair) ""))
-                    placeholder (str "{{ " k " }}")
-                    next-curr (str/replace curr placeholder v)]
-                (recur (rest rem) next-curr)))))
-        (throw "Template task requires src and vars (as k=v,...)")))))
+        (if (map? vars)
+          ;; vars is a parsed YAML map (e.g., {:name "NPKM"})
+          (let [var-keys (keys vars)
+                final (loop [rem var-keys
+                             curr content]
+                        (if (empty? rem)
+                          curr
+                          (let [k (first rem)
+                                v (get vars k)
+                                k-str (if (str/starts-with? (str k) ":")
+                                        (subs (str k) 1 (count (str k)))
+                                        (str k))
+                                p1 (str "{{ " k-str " }}")
+                                p2 (str "{{" k-str "}}")
+                                c1 (str/replace curr p1 (str v))
+                                c2 (str/replace c1 p2 (str v))]
+                            (recur (rest rem) c2))))]
+            (io/write-file (:dest s) final)
+            nil)
+          ;; Legacy: vars is a comma-separated string "k=v,k2=v2"
+          (let [kv-pairs (str/split (str vars) ",")]
+            (loop [rem kv-pairs
+                   curr content]
+              (if (empty? rem)
+                (do
+                  (io/write-file (:dest s) curr)
+                  nil)
+                (let [pair (str/split (first rem) "=")
+                      k (str/trim (if (> (count pair) 0) (first pair) ""))
+                      v (str/trim (if (> (count pair) 1) (second pair) ""))
+                      p1 (str "{{ " k " }}")
+                      p2 (str "{{" k "}}")
+                      c1 (str/replace curr p1 v)
+                      c2 (str/replace c1 p2 v)]
+                  (recur (rest rem) c2))))))
+        (throw "Template task requires src and vars")))))
 
 ;; yaml-to-edn is provided by libs/yaml/src/yaml.coni (yaml/yaml-to-edn)
 
@@ -350,10 +412,11 @@
                       k-str (if (str/starts-with? (str k) ":") (str/substring (str k) 1 (count (str k))) (str k))]
                   (recur (rest k-list) (assoc acc k-str (get local-cfg k))))))
         interp-content (yaml/interpolate-config content cfg)]
-    (if is-yaml
-      (read-string (yaml/yaml-to-edn interp-content))
-      (let [parsed (read-string interp-content)]
-        (if (:tasks parsed) (:tasks parsed) parsed)))))
+    (let [res (if is-yaml
+                (read-string (yaml/yaml-to-edn interp-content))
+                (let [parsed (read-string interp-content)]
+                  (if (:tasks parsed) (:tasks parsed) parsed)))]
+      res)))
 
 
 
@@ -396,36 +459,88 @@
           [k v]
           (recur (rest rem)))))))
 
-(defn run-task [raw-task runtime-vars]
-  (let [interp-raw-task (walk-interp raw-task runtime-vars)]
-    (if (is-bw)
-      (println "TASK [" (:name interp-raw-task) "]")
-      (println "\033[36mTASK [" (:name interp-raw-task) "]\033[0m"))
-    (let [match (get-task-match interp-raw-task)]
-      (if match
-        (let [k (first match)
-              v (second match)
-              constructor (get playbook-task-registry k)
-              out-str (execute (constructor v))
-              reg-key (if (:register interp-raw-task) (:register interp-raw-task) (if (and (map? v) (:register v)) (:register v) nil))]
-          (do
-            (if (and out-str (not (= (str/trim (str out-str)) "")))
-              (println (str/trim (str out-str)))
-              nil)
-            (if (is-bw)
-              (println "  changed\n")
-              (println "\033[32m  changed\033[0m\n"))
-            (if reg-key
-              (assoc runtime-vars reg-key (str/trim (if out-str (str out-str) "")))
-              runtime-vars)))
+(defn replace-item-placeholders
+  "Recursively replaces {{ item }} and {{item}} in all string values of a data structure."
+  [node item-val]
+  (if (map? node)
+    (loop [ks (keys node) acc {}]
+      (if (empty? ks) acc
+          (recur (rest ks) (assoc acc (first ks) (replace-item-placeholders (get node (first ks)) item-val)))))
+    (if (vector? node)
+      (loop [rem node acc []]
+        (if (empty? rem) acc
+            (recur (rest rem) (conj acc (replace-item-placeholders (first rem) item-val)))))
+      (if (string? node)
+        (str/replace (str/replace node "{{ item }}" (str item-val)) "{{item}}" (str item-val))
+        node))))
+
+(defn run-single-task
+  "Executes a single task (no loop) and returns updated runtime-vars."
+  [interp-raw-task runtime-vars]
+  (let [match (get-task-match interp-raw-task)]
+    (if match
+      (let [k (first match)
+            v (second match)
+            constructor (get playbook-task-registry k)
+            out-str (execute (constructor v))
+            reg-key (if (:register interp-raw-task) (:register interp-raw-task) (if (and (map? v) (:register v)) (:register v) nil))]
         (do
-          (if (is-bw)
-            (println "  warning: unknown or missing module type")
-            (println "\033[33m  warning: unknown or missing module type\033[0m"))
+          (if (and out-str (not (= (str/trim (str out-str)) "")))
+            (println (str/trim (str out-str)))
+            nil)
           (if (is-bw)
             (println "  changed\n")
             (println "\033[32m  changed\033[0m\n"))
-          runtime-vars)))))
+          {:vars (if reg-key
+                   (assoc runtime-vars reg-key (str/trim (if out-str (str out-str) "")))
+                   runtime-vars)
+           :output (str/trim (if out-str (str out-str) ""))}))
+      (do
+        (if (is-bw)
+          (println "  warning: unknown or missing module type")
+          (println "\033[33m  warning: unknown or missing module type\033[0m"))
+        (if (is-bw)
+          (println "  changed\n")
+          (println "\033[32m  changed\033[0m\n"))
+        {:vars runtime-vars :output ""}))))
+
+(defn run-task [raw-task runtime-vars]
+  (let [interp-raw-task (walk-interp raw-task runtime-vars)
+        match (get-task-match interp-raw-task)
+        mod-args (if match (second match) {})
+        ;; Check for loop items at root level or nested inside the module map
+        items (if (:with_items interp-raw-task)
+                (:with_items interp-raw-task)
+                (if (:with_items mod-args)
+                  (:with_items mod-args)
+                  (let [loop-val (if (:loop interp-raw-task) (:loop interp-raw-task) (:loop mod-args))]
+                    (if loop-val
+                      ;; If loop is a string referencing a runtime var, resolve it
+                      (if (string? loop-val)
+                        (let [resolved (get runtime-vars loop-val)]
+                          (if (vector? resolved) resolved
+                              (if resolved [resolved] [])))
+                        (if (vector? loop-val) loop-val []))
+                      nil))))]
+    (if (is-bw)
+      (println "TASK [" (:name interp-raw-task) "]")
+      (println "\033[36mTASK [" (:name interp-raw-task) "]\033[0m"))
+    (if items
+      ;; Loop mode: execute task once per item
+      (let [reg-key (if (:register interp-raw-task) (:register interp-raw-task) (:register mod-args))]
+        (loop [rem items
+               curr-vars runtime-vars
+               outputs []]
+          (if (empty? rem)
+            (if reg-key
+              (assoc curr-vars reg-key outputs)
+              curr-vars)
+            (let [item (first rem)
+                  item-task (replace-item-placeholders interp-raw-task item)
+                  result (run-single-task item-task curr-vars)]
+              (recur (rest rem) (:vars result) (conj outputs (:output result)))))))
+      ;; Normal mode: single execution
+      (:vars (run-single-task interp-raw-task runtime-vars)))))
 
 (defn run []
   (let [args (cli/args)
@@ -570,3 +685,4 @@
 
 )
 (run)
+

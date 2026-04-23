@@ -46,6 +46,40 @@
                 (recur (rest rem) (if (> (count acc) 0) (str acc sep trim-l) trim-l)))
               [acc rem])))))))
 
+(defn consume-submap
+  "Peeks ahead at lines to see if they form key:value pairs at deeper indent.
+   Returns [edn-map-str remaining-lines] where edn-map-str is like ':k1 \"v1\" :k2 \"v2\"'
+   or empty string if no sub-map found."
+  [lines base-indent]
+  (loop [rem lines
+         acc ""]
+    (if (empty? rem)
+      [acc rem]
+      (let [line (first rem)
+            trim-l (str/trim line)]
+        (if (= trim-l "")
+          (recur (rest rem) acc)
+          (let [indent (get-indent line)]
+            (if (> indent base-indent)
+              ;; Deeper indented line — check if it's a key:value pair (not a list item)
+              (if (str/starts-with? trim-l "- ")
+                ;; It's a list item, not a sub-map — stop and return nothing
+                ["" lines]
+                (if (str/includes? trim-l ":")
+                  (let [colon-idx (str/index-of trim-l ":")
+                        k-str (str/trim (str/substring trim-l 0 colon-idx))
+                        v-str (str/trim (str/substring trim-l (+ colon-idx 1) (count trim-l)))
+                        v-clean (strip-quotes v-str)
+                        v-val (if (or (= v-clean "true") (= v-clean "false"))
+                                v-clean
+                                (str "\"" (edn-escape v-clean) "\""))
+                        new-acc (str acc ":" k-str " " v-val " ")]
+                    (recur (rest rem) new-acc))
+                  ;; Not a key:value pair — stop
+                  [acc rem]))
+              ;; Not deeper indented — stop
+              [acc rem])))))))
+
 (defn yaml-to-edn
   "Converts YAML playbook content to an EDN string representation.
    Handles top-level task definitions with module sub-keys containing
@@ -113,12 +147,21 @@
                     (if (= (count mod-str) 0)
                       ;; No module open — start a new top-level module (e.g. powershell:)
                       (recur (rest rem) task-str (str ":" key-name " {") "" "" acc)
-                      ;; Module already open — this is a sub-key (e.g. params:)
+                      ;; Module already open — this could be a sub-key for a list OR a nested map
                       ;; Close any previous list first
                       (let [closed-mod (if (> (count list-key) 0)
                                          (str mod-str " :" list-key " [" list-str "]")
-                                         mod-str)]
-                        (recur (rest rem) task-str closed-mod key-name "" acc))))
+                                         mod-str)
+                            base-indent (get-indent line)
+                            ;; Peek ahead: if next non-empty lines are key:value pairs (not list items), consume as sub-map
+                            peek-res (consume-submap (rest rem) base-indent)
+                            sub-map-str (first peek-res)
+                            after-rem (second peek-res)]
+                        (if (> (count sub-map-str) 0)
+                          ;; Consumed a nested map
+                          (recur after-rem task-str (str closed-mod " :" key-name " {" sub-map-str "}") "" "" acc)
+                          ;; No sub-map — treat as a list key (original behavior)
+                          (recur (rest rem) task-str closed-mod key-name "" acc)))))
 
                   ;; === KEY:VALUE PAIR inside a module ===
                   (if (and (> (count task-str) 0) (> (count mod-str) 0)

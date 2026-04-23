@@ -1,42 +1,179 @@
 # NPKM (Nicolas's Playbook Kit Manager)
 
-NPKM is a lightweight, declarative automation and provisioning tool (similar to Ansible or Chef), designed for zero-friction environment bootstrapping. It is distributed across two implementations providing exact feature parity.
+NPKM is a lightweight, declarative automation and provisioning tool (similar to Ansible or Chef), designed for zero-friction environment bootstrapping. It is written natively in the **Coni** programming language, featuring a custom YAML-to-EDN parser and cross-platform native execution.
 
-## Implementations
+## Core Features
 
-- **[npkm-go](./npkm-go/)**: The original Go-based implementation built on `gopkg.in/yaml.v3` and `go-git`. Robust, strongly typed, and compiled easily into standalone binaries.
-- **[npkm-coni](./npkm-coni/)**: A Drop-in replacement implementation written natively in the **Coni** programming language. Features a custom YAML-to-EDN parser and relies on shell-based native abstractions.
+- **Cross-OS Build**: Compiles entirely to standalone native binaries (`.exe` and `Mach-O`).
+- **YAML Support**: Natively transforms Ansible-style tasks via its zero-dependency `yaml-to-edn` parser.
+- **Remote HTTP Playbooks**: Can run playbooks directly via URL.
+- **Git Repositories**: Scans cloned repos for playbook yaml/edn (`git clone`).
+- **Directory Scanning**: Recursively lists available playbook files.
+- **Global Configs**: Interpolation from `config:` blocks into `config.*` variables.
 
-## Feature Parity Matrix
+## Supported Tasks
 
-| Feature / Task | `npkm-go` | `npkm-coni` | Notes |
-| :--- | :---: | :---: | :--- |
-| **Core Architecture** | Go | Coni (Lisp-syntax) | |
-| **Cross-OS Build** | ✅ (Mac, Win, Linux) | ✅ (Mac, Win, Linux) | Both compile entirely to `.exe` and `Mach-O` |
-| **Remote HTTP Playbooks** | ✅ | ✅ | Can run playbooks directly via URL |
-| **Git Repositories** | ✅ (`go-git`) | ✅ (`git clone`) | Scans cloned repo for playbook yaml/edn |
-| **Directory Scanning** | ✅ | ✅ | Recursively lists available playbook files |
-| **Global Configs** | ✅ | ✅ | Interpolation from `config:` blocks & `config.yml` into `config.*` variables |
-| **YAML Support** | ✅ (Strict) | ✅ (`yaml-to-edn`) | Natively transforms Ansible-style tasks |
-| `file` | ✅ | ✅ | directory, touch, link, absent, modes |
-| `lineinfile` | ✅ | ✅ | Regex matching & replacement in streams |
-| `replace` | ✅ | ✅ | Replaces all instances of a regex pattern |
-| `path` | ✅ | ✅ | Patches `.bashrc` / Powershell registry |
-| `systemd` | ✅ | ✅ | start, stop, restart daemons |
-| `copy`, `move`, `remove` | ✅ | ✅ | Standard IO primitives |
-| `get_url` / `unzip` | ✅ | ✅ | Downloads and extracts remote assets |
-| `shell`, `command`, `pwsh`| ✅ | ✅ | Shell integration along with Powershell |
-| `debug`, `fail` | ✅ | ✅ | Playbook execution handling |
-| `package` | ✅ | ✅ | Auto-detects brew, apt-get, yum, or choco |
-| `service` | ✅ | ✅ | Generalizes systemctl, launchctl, and net start |
-| `cron` | ✅ | ✅ | UNIX crontab -l / - insertion & absent state |
-| `user` | ✅ | ✅ | Integrates useradd, sysadminctl, net user |
-| `archive` | ✅ | ✅ | tar and zip abstraction across paths |
-| `template` | ✅ | ✅ | Deploy templated files with mapped vars |
+| Task | Description |
+| :--- | :--- |
+| `file` | directory, touch, link, absent, modes |
+| `lineinfile` | Regex matching & replacement in streams |
+| `replace` | Replaces all instances of a regex pattern |
+| `path` | Modifies the system PATH environment variable |
+| `systemd` | start, stop, restart daemons |
+| `copy`, `move`, `remove` | Standard IO primitives |
+| `get_url` / `unzip` | Downloads and extracts remote assets |
+| `shell`, `command`, `powershell`| Shell integration along with inline Powershell |
+| `debug`, `fail` | Playbook execution logic and output |
+| `package` | Auto-detects brew, apt-get, yum, winget, or choco |
+| `service` | Generalizes systemctl, launchctl, and net start |
+| `cron` | UNIX crontab -l / - insertion & absent state |
+| `user` | Integrates useradd, sysadminctl, net user |
+| `archive` | Native `zip` operations without shell dependencies |
+| `template` | Deploy templated files with mapped configuration properties |
+
+## Task Reference & Examples
+
+### `file`
+Manage the state of a file, directory, or symlink.
+```yaml
+- name: Ensure configuration directory exists
+  file:
+    path: /etc/myapp
+    state: directory
+    mode: 0755
+```
+
+### `copy`
+Copy an existing file or directory directly to a specified path.
+```yaml
+- name: Copy deployment artifact
+  copy:
+    src: ./build/app.jar
+    dest: /opt/myapp/app.jar
+```
+
+### `move` / `remove`
+Rename, move, or completely delete elements on the disk.
+```yaml
+- name: Rename old log
+  move:
+    src: /var/log/app.log
+    dest: /var/log/app.old.log
+
+- name: Wipe temporary backups
+  remove:
+    path: /tmp/backups/*
+```
+
+### `get_url` & `unzip`
+Download remote assets and seamlessly extract them to the system.
+```yaml
+- name: Download web app
+  get_url:
+    url: https://github.com/user/repo/archive/main.zip
+    dest: /tmp/app.zip
+
+- name: Extract zip archive
+  unzip:
+    src: /tmp/app.zip
+    dest: /var/www/html/
+```
+
+### `archive`
+Compress local paths natively into an archive (without shell tools).
+```yaml
+- name: Backup web directory
+  archive:
+    src: /var/www/html/
+    dest: /backups/html_backup.zip
+```
+
+### `package`
+Automatically manage OS packages. Will intelligently resolve `brew`, `apt-get`, `yum`, `winget`, or `choco` depending on the platform.
+```yaml
+- name: Install Git
+  package:
+    name: git
+    state: present
+```
+
+### `service` & `systemd`
+Manage system-level daemons natively (`systemctl`, `launchctl`, or `net start`).
+```yaml
+- name: Enable and start Nginx
+  service:
+    name: nginx
+    state: started
+    enabled: true
+```
+
+### `shell`, `command` & `powershell`
+Execute raw OS-dependent instructions.
+```yaml
+- name: Run raw bash script
+  shell:
+    cmd: "rm -rf /tmp/cache && echo 'Cleared'"
+    cwd: /tmp/
+
+- name: Run Windows powershell instruction
+  powershell:
+    inline: "Get-Process | Where-Object {$_.Name -eq 'node'} | Stop-Process"
+```
+
+### `lineinfile` & `replace`
+Modify and parse file streams based on regex.
+```yaml
+- name: Ensure memory limit is correct
+  lineinfile:
+    path: /etc/php.ini
+    regexp: "^memory_limit="
+    line: "memory_limit=512M"
+
+- name: Swap default port anywhere in config
+  replace:
+    path: /opt/app/config.json
+    regexp: "8080"
+    replace: "9000"
+```
+
+### `path`
+Append a directory natively to the global OS `$PATH` configuration.
+```yaml
+- name: Install java to path
+  path:
+    path: /opt/java/bin
+```
+
+### `user` & `cron`
+Manage system-level profiles and periodic tasks.
+```yaml
+- name: Add worker user
+  user:
+    name: worker
+    state: present
+
+- name: Setup midnight backup
+  cron:
+    name: "DB Backup"
+    state: present
+    job: "0 0 * * * /opt/backup.sh"
+```
+
+### `debug` & `fail`
+Provide real-time execution outputs or forcefully term execution conditions.
+```yaml
+- name: Print variables
+  debug:
+    msg: "Current root path is {{ config.root }}"
+
+- name: Stop on unsupported OS
+  fail:
+    msg: "Halting execution: OS not supported."
+```
 
 ## Global Configuration Interpolation
 
-Both `npkm-go` and `npkm-coni` support dynamic global string replacement. You can define variables in an inline `config:` block at the top of your playbook (or placed alongside it as a separate `config.yml`), and they will be injected wherever `config.your_key` is referenced in the tasks.
+NPKM supports dynamic global string replacement. You can define variables in an inline `config:` block at the top of your playbook (or placed alongside it as a separate `config.yml`), and they will be injected wherever `config.your_key` is referenced in the tasks.
 
 ```yaml
 config:
@@ -50,14 +187,72 @@ tasks:
       state: directory
 ```
 
-## Usage
-Provide either a local YAML/EDN file, a directory, a remote HTTP/HTTPS link, or an SSH Git path:
-```bash
-# NPKM Go
-cd npkm-go
-./npkm playbook.sample.yml
+## Advanced Features
 
-# NPKM Coni
-cd npkm-coni
+### Loops & Iteration
+NPKM supports native task iteration using `with_items` and `loop` constructs. You can loop over inline lists or variables defined in your configuration, and dynamically interpolate the `{{ item }}` reference throughout your task properties.
+
+**Using `with_items` (Inline List):**
+```yaml
+tasks:
+  - name: Install required packages
+    package:
+      name: "{{ item }}"
+      state: present
+    with_items:
+      - curl
+      - git
+      - docker
+```
+
+**Using `loop` (Variable Reference):**
+```yaml
+config:
+  app_files:
+    - index.html
+    - app.js
+    - style.css
+
+tasks:
+  - name: Copy app files
+    copy:
+      src: "./src/{{ item }}"
+      dest: "/var/www/html/{{ item }}"
+    loop: config.app_files
+```
+
+### Advanced Templating & Nesting
+The YAML parser perfectly maps complex YAML structures into nested dictionaries. You can use the `template` task to inject a full dictionary of key-value pairs (using the `vars:` map) into your configuration templates seamlessly:
+
+```yaml
+tasks:
+  - name: Configure Nginx Site
+    template:
+      src: ./templates/nginx.conf.j2
+      dest: /etc/nginx/nginx.conf
+      vars:
+        port: 8080
+        server_name: mysite.local
+        worker_processes: 4
+```
+
+## Usage
+
+Provide a single local YAML/EDN file, a directory containing playbooks, a mix of files and folders, a remote HTTP/HTTPS link, or an SSH/Git path. When you pass a directory, NPKM recursively lists and evaluates all playbook files inside it!
+
+```bash
+# Run a specific local playbook
+./npkm-coni test-playbook.yml
+
+# Run all playbooks inside a directory
+./npkm-coni ./playbooks/
+
+# Mix and match individual files and folders at the same time
+./npkm-coni deploy-web.yml ./database_setup/ ./monitoring/
+
+# Clone from Git and run
 ./npkm-coni ssh://git@s5:2222/hellonico/my-playbook.git
+
+# Run directly from a remote web server
+./npkm-coni https://raw.githubusercontent.com/user/npkm/main/playbook.yml
 ```
