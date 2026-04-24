@@ -2,6 +2,11 @@ name: Install Ollama
 hosts: all
 
 tasks:
+  - name: Clean up old ROCm directory (Unix)
+    shell:
+      cmd: "rm -rf /usr/local/lib/ollama/rocm || sudo rm -rf /usr/local/lib/ollama/rocm || true"
+    when: "ansible_os_family == 'Unix'"
+
   - name: Install Ollama on Unix (Linux/macOS)
     shell:
       cmd: curl -fsSL https://ollama.com/install.sh | sh
