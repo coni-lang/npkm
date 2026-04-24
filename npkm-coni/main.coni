@@ -4,6 +4,7 @@
 (require "libs/cli/src/cli.coni" :as cli)
 (require "libs/str/src/str.coni" :as str)
 (require "lib/yaml.coni" :as yaml)
+(require "lib/ssh.coni" :as ssh)
 
 ;; --- Platform helpers (compile-time, like Rust cfg) ---
 (def *os* (sys-os-name))
@@ -51,7 +52,7 @@
              (if (empty? rem) curr
                  (let [k (first rem)
                        v (get vars k)]
-                   (recur (rest rem) (str/replace curr (str "var." k) v))))))
+                   (recur (rest rem) (str/replace curr (str "var." k) (str v)))))))
         node))))
 
 (defprotocol PlaybookTask
@@ -62,9 +63,12 @@
   (execute [this]
     (let [cmd (:cmd (:spec this))
           cwd (:cwd (:spec this))
-          real-cmd (if cwd (str "cd " cwd " && " cmd) cmd)
-          res (shell/sh real-cmd)]
-      (if (= (:code res) 0) (:stdout res) (throw (str "Exit code " (:code res) " : " (:stderr res)))))))
+          conn (:__connection__ (:spec this))
+          real-cmd (if cwd (str "cd " cwd " && " cmd) cmd)]
+      (if conn
+        (ssh/ssh-exec conn real-cmd)
+        (let [res (shell/sh real-cmd)]
+          (if (= (:code res) 0) (:stdout res) (throw (str "Exit code " (:code res) " : " (:stderr res)))))))))
 
 (defrecord CommandTask [spec]
   PlaybookTask
@@ -75,25 +79,33 @@
   PlaybookTask
   (execute [this]
     (let [s (:spec this)
+          conn (:__connection__ s)
           state (:state s)
           path (:path s)]
-      (do
-        (if (= state "directory")
-          (io/make-dir path)
+      (if conn
+        (do
+          (if (= state "directory")
+            (ssh/ssh-exec conn (str "mkdir -p '" path "'"))
+            (if (= state "touch")
+              (ssh/ssh-exec conn (str "mkdir -p \"$(dirname '" path "')\" && touch '" path "'"))
+              (if (= state "absent")
+                (ssh/ssh-exec conn (str "rm -rf '" path "'"))
+                (if (= state "link")
+                  (ssh/ssh-exec conn (str "ln -s '" (:src s) "' '" path "'"))
+                  (throw (str "Unknown state " state))))))
+          (if (:mode s) (ssh/ssh-exec conn (str "chmod " (:mode s) " '" path "'")) nil)
+          nil)
+        (do
+          (if (= state "directory") (io/make-dir path)
           (if (= state "touch")
-            (let [res (shell/sh (str "mkdir -p \"$(dirname " path ")\" && touch " path))]
-              (if (= (:code res) 0) nil (throw (:stderr res))))
-            (if (= state "absent")
-              (io/delete-file path)
-              (if (= state "link")
-                (let [res (shell/sh (str "ln -s " (:src s) " " path))]
-                  (if (= (:code res) 0) nil (throw (:stderr res))))
-                (throw (str "Unknown state " state))))))
-        (if (:mode s)
-          (let [mode-str (:mode s)
-                res (shell/sh (str "chmod " mode-str " " path))]
-            (if (= (:code res) 0) nil (throw (:stderr res))))
-          nil)))))
+            (let [res (shell/sh (str "mkdir -p \"$(dirname " path ")\" && touch " path))] (if (= (:code res) 0) nil (throw (:stderr res))))
+          (if (= state "absent") (io/delete-file path)
+          (if (= state "link")
+            (let [res (shell/sh (str "ln -s " (:src s) " " path))] (if (= (:code res) 0) nil (throw (:stderr res))))
+            (throw (str "Unknown state " state))))))
+          (if (:mode s)
+            (let [res (shell/sh (str "chmod " (:mode s) " " path))] (if (= (:code res) 0) nil (throw (:stderr res))))
+            nil))))))
 
 (defrecord DebugTask [spec]
   PlaybookTask
@@ -106,40 +118,51 @@
   PlaybookTask
   (execute [this]
     (let [s (:spec this)
+          conn (:__connection__ s)
           src (str/trim-end (:src s) "/\\")
           dest (str/trim-end (:dest s) "/\\")]
-      (if (io/directory? src)
-        ;; Native recursive copy — no shell dependency
-        (let [entries (io/file-seq src)]
-          (loop [rem entries]
-            (if (empty? rem)
-              nil
-              (let [e (first rem)
-                    rel (subs e (count src) (count e))
-                    target (str dest rel)]
-                (if (io/directory? e)
-                  (io/make-dir target)
-                  (io/copy e target))
-                (recur (rest rem))))))
-        (do (io/copy src dest) nil)))))
+      (if conn
+        (do
+          (if (io/directory? src)
+            (let [entries (io/file-seq src)]
+              (loop [rem entries]
+                (if (empty? rem) nil
+                  (let [e (first rem)
+                        rel (subs e (count src) (count e))
+                        target (str dest rel)]
+                    (if (io/directory? e)
+                      (ssh/ssh-exec conn (str "mkdir -p '" target "'"))
+                      (ssh/ssh-upload conn e target))
+                    (recur (rest rem))))))
+            (ssh/ssh-upload conn src dest))
+          nil)
+        (if (io/directory? src)
+          (let [entries (io/file-seq src)]
+            (loop [rem entries]
+              (if (empty? rem) nil
+                (let [e (first rem)
+                      rel (subs e (count src) (count e))
+                      target (str dest rel)]
+                  (if (io/directory? e) (io/make-dir target) (io/copy e target))
+                  (recur (rest rem))))))
+          (do (io/copy src dest) nil))))))
 
 (defrecord RemoveTask [spec]
   PlaybookTask
   (execute [this]
-    (let [path (:path (:spec this))]
-      (if (str/includes? path "*")
-        ;; Glob mode: delete each entry inside the parent directory
-        (let [sep-idx (max (str/last-index-of path "/")
-                           (str/last-index-of path "\\"))
-              dir (if (> sep-idx 0) (subs path 0 sep-idx) ".")
-              entries (io/read-dir dir)]
-          (loop [rem entries]
-            (if (empty? rem)
-              nil
-              (do
-                (io/delete-file (str dir "/" (first rem)))
-                (recur (rest rem))))))
-        (io/delete-file path)))))
+    (let [s (:spec this)
+          conn (:__connection__ s)
+          path (:path s)]
+      (if conn
+        (ssh/ssh-exec conn (str "rm -rf " path))
+        (if (str/includes? path "*")
+          (let [sep-idx (max (str/last-index-of path "/") (str/last-index-of path "\\"))
+                dir (if (> sep-idx 0) (subs path 0 sep-idx) ".")
+                entries (io/read-dir dir)]
+            (loop [rem entries]
+              (if (empty? rem) nil
+                (do (io/delete-file (str dir "/" (first rem))) (recur (rest rem))))))
+          (io/delete-file path))))))
 
 (defrecord FailTask [spec]
   PlaybookTask
@@ -452,6 +475,97 @@
 (def playbook-task-keys
   (keys playbook-task-registry))
 
+
+(defn strip-quotes-local [s]
+  (let [t (str/trim s)]
+    (if (and (str/starts-with? t "\"") (str/ends-with? t "\""))
+      (subs t 1 (- (count t) 1))
+      (if (and (str/starts-with? t "'") (str/ends-with? t "'"))
+        (subs t 1 (- (count t) 1))
+        t))))
+
+(defn parse-inventory-yaml [content]
+  (let [lines (str/split content "\n")]
+    (loop [rem lines
+           curr-group "all"
+           curr-host nil
+           acc {"all" {:hosts {}}}]
+      (if (empty? rem)
+        acc
+        (let [line (first rem)
+              trim-line (str/trim line)
+              is-comment (str/starts-with? trim-line "#")
+              is-empty (= trim-line "")]
+          (if (or is-comment is-empty (= trim-line "all:") (= trim-line "hosts:"))
+            (recur (rest rem) (if (= trim-line "all:") "all" curr-group) curr-host acc)
+            (let [indent (- (count line) (count (str/trim line)))]
+              (if (and (str/ends-with? trim-line ":") (not (str/includes? trim-line " ")))
+                (let [name (subs trim-line 0 (- (count trim-line) 1))]
+                  (if (<= indent 2)
+                    (recur (rest rem) name nil (if (not (get acc name)) (assoc acc name {:hosts {}}) acc))
+                    (let [new-acc (if (not (get acc curr-group)) (assoc acc curr-group {:hosts {}}) acc)
+                          group-data (get new-acc curr-group)
+                          hosts-data (if (:hosts group-data) (:hosts group-data) {})
+                          new-hosts-data (assoc hosts-data name {})
+                          new-group-data (assoc group-data :hosts new-hosts-data)
+                          final-acc (assoc new-acc curr-group new-group-data)]
+                      (recur (rest rem) curr-group name final-acc))))
+                (if (and curr-group curr-host (str/includes? trim-line ":"))
+                  (let [colon-idx (str/index-of trim-line ":")
+                        k-str (str/trim (subs trim-line 0 colon-idx))
+                        v-str (str/trim (subs trim-line (+ colon-idx 1) (count trim-line)))
+                        v-clean (strip-quotes-local v-str)
+v-val v-clean
+                        group-data (get acc curr-group)
+                        hosts-data (:hosts group-data)
+                        host-data (get hosts-data curr-host)
+                        new-host-data (assoc host-data (keyword k-str) v-val)
+                        new-hosts-data (assoc hosts-data curr-host new-host-data)
+                        new-group-data (assoc group-data :hosts new-hosts-data)
+                        final-acc (assoc acc curr-group new-group-data)]
+                    (recur (rest rem) curr-group curr-host final-acc))
+                  (recur (rest rem) curr-group curr-host acc))))))))))
+
+(defn parse-inventory [path]
+  (if (io/exists? path)
+    (let [content (io/read-file path)
+          is-yaml (or (str/ends-with? path ".yml") (str/ends-with? path ".yaml"))
+          data (if is-yaml
+                 (parse-inventory-yaml content)
+                 (read-string content))]
+      data)
+    {}))
+
+(defn get-hosts [inventory target-group]
+  (if (= target-group "localhost")
+    ["localhost"]
+    (let [group (get inventory target-group)]
+      (if group
+        (if (:hosts group)
+          (keys (:hosts group))
+          (if (map? group) (keys group) group))
+        (let [all-group (get inventory "all")]
+          (if (and all-group (:hosts all-group) (get (:hosts all-group) target-group))
+            [target-group]
+            []))))))
+
+(defn get-host-vars [inventory host-name]
+  (let [all-hosts (if (and (get inventory "all") (:hosts (get inventory "all")))
+                    (:hosts (get inventory "all"))
+                    {})
+        host-data (get all-hosts host-name)]
+    (if host-data host-data {})))
+
+(defn extract-hosts [content]
+  (let [lines (str/split content "\n")]
+    (loop [rem lines]
+      (if (empty? rem)
+        "localhost"
+        (let [trim (str/trim (first rem))]
+          (if (str/starts-with? trim "hosts:")
+            (str/trim (subs trim 6 (count trim)))
+            (recur (rest rem))))))))
+
 (defn get-task-match [raw]
   (loop [rem playbook-task-keys]
     (if (empty? rem)
@@ -484,8 +598,9 @@
     (if match
       (let [k (first match)
             v (second match)
+            v-with-conn (if (map? v) (assoc v :__connection__ (:__connection__ runtime-vars)) v)
             constructor (get playbook-task-registry k)
-            out-str (execute (constructor v))
+            out-str (execute (constructor v-with-conn))
             reg-key (if (:register interp-raw-task) (:register interp-raw-task) (if (and (map? v) (:register v)) (:register v) nil))]
         (do
           (if (and out-str (not (= (str/trim (str out-str)) "")))
@@ -545,11 +660,57 @@
       ;; Normal mode: single execution
       (:vars (run-single-task interp-raw-task runtime-vars)))))
 
+
+(defn execute-playbook [parsed-content inventory global-vars is-bw yaml-content]
+  (let [plays (if (and (vector? parsed-content) (map? (first parsed-content)) (:tasks (first parsed-content)))
+                parsed-content
+                (let [play-hosts (if yaml-content (extract-hosts yaml-content) (if (map? parsed-content) (:hosts parsed-content "localhost") "localhost"))]
+                   [{:name "Default Play" :hosts play-hosts :tasks (if (map? parsed-content) (:tasks parsed-content) parsed-content)}]))]
+    (loop [rem-plays plays
+           play-vars global-vars]
+      (if (empty? rem-plays)
+        (if is-bw
+          (println "Playbook finished natively in Coni!")
+          (println "\033[34mPlaybook finished natively in Coni!\033[0m"))
+        (let [play (first rem-plays)
+              target-group (if (:hosts play) (:hosts play) "localhost")
+              p-vars (if (:vars play) (:vars play) {})
+              base-vars (merge play-vars p-vars)
+              tasks (:tasks play)
+              target-hosts (if (and inventory (> (count inventory) 0)) (get-hosts inventory target-group) (if (= target-group "localhost") ["localhost"] [target-group]))]
+          (loop [rem-hosts target-hosts]
+            (if (empty? rem-hosts)
+              nil
+              (let [host (first rem-hosts)
+                    host-vars (if (and inventory (> (count inventory) 0) (not= host "localhost")) (get-host-vars inventory host) {})
+                    conn-cfg (if (and (not= host "localhost") (not= host ""))
+                               {:host (if (:ansible_host host-vars) (:ansible_host host-vars) host)
+                                :user (if (:ansible_user host-vars) (:ansible_user host-vars) "root")
+                                :key (if (:ansible_ssh_private_key_file host-vars) (:ansible_ssh_private_key_file host-vars) nil)
+                                :password (if (:ansible_ssh_pass host-vars) (:ansible_ssh_pass host-vars) nil)
+                                :port (if (:ansible_port host-vars) (:ansible_port host-vars) 22)}
+                               nil)
+                    runtime-vars (merge base-vars host-vars)
+                    runtime-vars (if conn-cfg (assoc runtime-vars :__connection__ conn-cfg) runtime-vars)]
+                (if is-bw
+                  (println "\nPLAY [" (:name play) "]\nHOST [" host "]")
+                  (println "\n\033[36mPLAY [" (:name play) "]\033[0m\n\033[35mHOST [" host "]\033[0m"))
+                (loop [rem-tasks tasks
+                       curr-vars runtime-vars]
+                  (if (empty? rem-tasks)
+                    nil
+                    (let [new-vars (run-task (first rem-tasks) curr-vars)]
+                      (recur (rest rem-tasks) new-vars))))
+                (recur (rest rem-hosts)))))
+          (recur (rest rem-plays) play-vars))))))
+
 (defn run []
   (let [args (cli/args)
         flags (filter (fn [x] (str/starts-with? x "-")) args)
         pos-args (filter (fn [x] (not (str/starts-with? x "-"))) args)
-        is-bw (some (fn [x] (= x "-bw")) flags)]
+        is-bw (some (fn [x] (= x "-bw")) flags)
+        inv-file (loop [i 0] (if (>= i (count args)) nil (if (= (nth args i) "-i") (nth args (+ i 1)) (recur (+ i 1)))))
+        inventory (if inv-file (parse-inventory inv-file) nil)]
     (if (some (fn [x] (or (= x "-v") (= x "-V") (= x "--version"))) flags)
       (do
         (let [exe-path ((sys-os-args) 0)
@@ -615,7 +776,8 @@
         (sys-exit 0))
       nil)
     
-    (let [playbook-file (first pos-args)
+    (let [pos-args-clean (filter (fn [x] (and (not (str/ends-with? x ".coni")) (not (or (= x "-i") (= x inv-file))))) pos-args)
+          playbook-file (first pos-args-clean)
           is-git? (or (str/ends-with? playbook-file ".git") (str/starts-with? playbook-file "git://") (str/starts-with? playbook-file "git@") (str/starts-with? playbook-file "ssh://git@"))]
       (if (io/directory? playbook-file)
         (let [entries (io/read-dir playbook-file)]
@@ -646,14 +808,7 @@
                       tasks (parse-playbook real-p content)]
                   (do
                     (shell/sh (str "cd " tmp-dir))
-                    (loop [rem tasks
-                           runtime-vars {}]
-                      (if (empty? rem)
-                        (if is-bw
-                          (println "Playbook finished natively in Coni!")
-                          (println "\033[34mPlaybook finished natively in Coni!\033[0m"))
-                        (let [new-vars (run-task (first rem) runtime-vars)]
-                          (recur (rest rem) new-vars))))))
+                    (execute-playbook tasks inventory {} is-bw content)))
                 (do (if is-bw (println "Error cloning git repo:" (:stderr res)) (println "\033[31mError cloning git repo:" (:stderr res) "\033[0m")) (sys-exit 1)))))
           (if (str/includes? playbook-file "http")
             (let [dest (if (or (str/ends-with? playbook-file ".yml") (str/ends-with? playbook-file ".yaml")) "tmp/remote-playbook.yml" "tmp/remote-playbook.edn")
@@ -677,14 +832,7 @@
                 (sys-exit 1))
               (let [content (io/read-file playbook-file)
                     tasks (parse-playbook playbook-file content)]
-                (loop [rem tasks
-                       runtime-vars {}]
-                  (if (empty? rem)
-                    (if is-bw
-                      (println "Playbook finished natively in Coni!")
-                      (println "\033[34mPlaybook finished natively in Coni!\033[0m"))
-                    (let [new-vars (run-task (first rem) runtime-vars)]
-                      (recur (rest rem) new-vars)))))))))))
+                (execute-playbook tasks inventory {} is-bw content))))))))
 
 )
 (run)

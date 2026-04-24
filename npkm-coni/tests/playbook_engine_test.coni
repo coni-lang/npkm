@@ -1,0 +1,109 @@
+(require "libs/str/src/str.coni" :as str)
+
+(defn walk-interp [node vars]
+  (if (map? node)
+    (loop [ks (keys node)
+           acc {}]
+      (if (empty? ks) acc
+          (recur (rest ks) (assoc acc (first ks) (walk-interp (get node (first ks)) vars)))))
+    (if (vector? node)
+      (loop [rem node
+             acc []]
+        (if (empty? rem) acc
+            (recur (rest rem) (conj acc (walk-interp (first rem) vars)))))
+      (if (string? node)
+        (let [k-list (keys vars)]
+          (loop [rem k-list
+                 curr node]
+             (if (empty? rem) curr
+                 (let [k (first rem)
+                       v (get vars k)
+                       k-str (if (str/starts-with? (str k) ":")
+                               (subs (str k) 1 (count (str k)))
+                               (str k))
+                       p1 (str "{{ " k-str " }}")
+                       p2 (str "{{" k-str "}}")
+                       c1 (str/replace curr p1 (str v))
+                       c2 (str/replace c1 p2 (str v))]
+                   (recur (rest rem) c2)))))
+        node))))
+
+(deftest test-walk-interp
+  "Tests the variable interpolation logic for the playbook engine"
+  (let [raw-task {:name "Run a remote command" :shell {:cmd "echo \"Variable from inventory is {{ my_var }}\""}}
+        runtime-vars {:my_var "hello world!" :__connection__ {:host "127.0.0.1"}}
+        interp (walk-interp raw-task runtime-vars)]
+    (is (= "Run a remote command" (:name interp)))
+    (is (= "echo \"Variable from inventory is hello world!\"" (:cmd (:shell interp))))))
+
+(defn strip-quotes-local [s]
+  (let [t (str/trim s)]
+    (if (and (str/starts-with? t "\"") (str/ends-with? t "\""))
+      (subs t 1 (- (count t) 1))
+      (if (and (str/starts-with? t "'") (str/ends-with? t "'"))
+        (subs t 1 (- (count t) 1))
+        t))))
+
+(defn parse-inventory-yaml [content]
+  (let [lines (str/split content "\n")]
+    (loop [rem lines
+           curr-group "all"
+           curr-host nil
+           acc {"all" {:hosts {}}}]
+      (if (empty? rem)
+        acc
+        (let [line (first rem)
+              trim-line (str/trim line)
+              is-comment (str/starts-with? trim-line "#")
+              is-empty (= trim-line "")]
+          (if (or is-comment is-empty (= trim-line "all:") (= trim-line "hosts:"))
+            (recur (rest rem) (if (= trim-line "all:") "all" curr-group) curr-host acc)
+            (let [indent (- (count line) (count (str/trim line)))]
+              (if (and (str/ends-with? trim-line ":") (not (str/includes? trim-line " ")))
+                (let [name (subs trim-line 0 (- (count trim-line) 1))]
+                  (if (<= indent 2)
+                    (recur (rest rem) name nil (if (not (get acc name)) (assoc acc name {:hosts {}}) acc))
+                    (let [new-acc (if (not (get acc curr-group)) (assoc acc curr-group {:hosts {}}) acc)
+                          group-data (get new-acc curr-group)
+                          hosts-data (if (:hosts group-data) (:hosts group-data) {})
+                          new-hosts-data (assoc hosts-data name {})
+                          new-group-data (assoc group-data :hosts new-hosts-data)
+                          final-acc (assoc new-acc curr-group new-group-data)]
+                      (recur (rest rem) curr-group name final-acc))))
+                (if (and curr-group curr-host (str/includes? trim-line ":"))
+                  (let [colon-idx (str/index-of trim-line ":")
+                        k-str (str/trim (subs trim-line 0 colon-idx))
+                        v-str (str/trim (subs trim-line (+ colon-idx 1) (count trim-line)))
+                        v-clean (strip-quotes-local v-str)
+                        v-val v-clean
+                        group-data (get acc curr-group)
+                        hosts-data (:hosts group-data)
+                        host-data (get hosts-data curr-host)
+                        new-host-data (assoc host-data (keyword k-str) v-val)
+                        new-hosts-data (assoc hosts-data curr-host new-host-data)
+                        new-group-data (assoc group-data :hosts new-hosts-data)
+                        final-acc (assoc acc curr-group new-group-data)]
+                    (recur (rest rem) curr-group curr-host final-acc))
+                  (recur (rest rem) curr-group curr-host acc))))))))))
+
+(deftest test-parse-inventory-yaml
+  "Tests Ansible-style YAML inventory parsing"
+  (let [content "all:\n  hosts:\n    server1:\n      ansible_host: 127.0.0.1\n      ansible_user: nico\n"
+        inv (parse-inventory-yaml content)]
+    (is (= "127.0.0.1" (:ansible_host (get (:hosts (get inv "all")) "server1"))))
+    (is (= "nico" (:ansible_user (get (:hosts (get inv "all")) "server1"))))))
+
+(defn extract-hosts [content]
+  (let [lines (str/split content "\n")]
+    (loop [rem lines]
+      (if (empty? rem)
+        "localhost"
+        (let [trim (str/trim (first rem))]
+          (if (str/starts-with? trim "hosts:")
+            (str/trim (subs trim 6 (count trim)))
+            (recur (rest rem))))))))
+
+(deftest test-extract-hosts
+  "Tests extracting target hosts from a playbook"
+  (is (= "server1" (extract-hosts "hosts: server1\ntasks:\n  - name: test")))
+  (is (= "localhost" (extract-hosts "tasks:\n  - name: test"))))

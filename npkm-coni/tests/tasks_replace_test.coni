@@ -1,0 +1,129 @@
+;; Tests for the ReplaceTask (regex-based file replacement)
+;; and CopyTask (cross-platform file copy)
+
+(require "libs/os/src/io.coni" :as io)
+(require "libs/str/src/str.coni" :as str)
+
+(def test-dir "tmp/test-replace")
+(io/make-dir test-dir)
+
+(deftest test-replace-regex
+  "Test various string replace-regex scenarios"
+  (is (= "REPLACED world" (str/replace-regex "hello world" "^hello" "REPLACED")))
+  (is (= "hello REPLACED" (str/replace-regex "hello world" "world$" "REPLACED")))
+  (is (= "hllo" (str/replace-regex "hello" "e" "")))
+  (is (= "a_b_c" (str/replace-regex "a b c" "\\s" "_")))
+  (is (= "XbXcXdX" (str/replace-regex "aabcaad" "a*" "X")))
+  (is (= "X bit X" (str/replace-regex "cat bit dog" "cat|dog" "X")))
+  (is (= "192-168-1-1" (str/replace-regex "192.168.1.1" "\\." "-")))
+  (is (= "X X X" (str/replace-regex "Hello HELLO hello" "(?i)hello" "X")))
+  (is (= "line1\nREPLACED\nline3" (str/replace-regex "line1\nline2\nline3" "line2" "REPLACED"))))
+
+(deftest test-replace-task-file
+  "ReplaceTask integration tests (file-based)"
+  (let [f (str test-dir "/test1.txt")]
+    (io/write-file f "version=1.0.0\nname=myapp\n")
+    (let [content (io/read-file f)
+          new-content (str/replace-regex content "1\\.0\\.0" "2.0.0")]
+      (io/write-file f new-content)
+      (is (= "version=2.0.0\nname=myapp\n" (io/read-file f)))))
+
+  (let [f (str test-dir "/test2.txt")]
+    (io/write-file f "server=http://old-host:8080/api\ndb=postgres\n")
+    (let [content (io/read-file f)
+          new-content (str/replace-regex content "http://old-host:8080" "https://new-host:443")]
+      (io/write-file f new-content)
+      (is (= "server=https://new-host:443/api\ndb=postgres\n" (io/read-file f)))))
+
+  (let [f (str test-dir "/test3.txt")]
+    (io/write-file f "DEBUG=true\nLOG_LEVEL=info\n")
+    (let [content (io/read-file f)
+          new-content (str/replace-regex content "^DEBUG=true" "# DEBUG=true")]
+      (io/write-file f new-content)
+      (is (= "# DEBUG=true\nLOG_LEVEL=info\n" (io/read-file f)))))
+
+  (let [f (str test-dir "/test5.txt")]
+    (io/write-file f "color: red; background: blue;")
+    (let [content (io/read-file f)
+          step1 (str/replace-regex content "red" "green")
+          step2 (str/replace-regex step1 "blue" "yellow")]
+      (io/write-file f step2)
+      (is (= "color: green; background: yellow;" (io/read-file f))))))
+
+(deftest test-copy-task
+  "CopyTask tests"
+  (let [src (str test-dir "/copy-src.txt")
+        dest (str test-dir "/copy-dest.txt")]
+    (io/write-file src "copy test content")
+    (io/copy src dest)
+    (is (= "copy test content" (io/read-file dest))))
+
+  (let [src (str test-dir "/copy-src2.txt")
+        dest (str test-dir "/nested/dir/copy-dest2.txt")]
+    (io/write-file src "nested copy test")
+    (io/copy src dest)
+    (is (= "nested copy test" (io/read-file dest)))))
+
+;; Helper that simulates what LineInFileTask does
+(defn lineinfile-exec [path pattern line]
+  (if pattern
+    (let [content (if (io/exists? path) (io/read-file path) "")
+          lines (str/split content "\n")
+          result (loop [rem lines
+                        acc []
+                        matched false]
+                   (if (empty? rem)
+                     {:lines acc :matched matched}
+                     (let [cur (first rem)]
+                       (if (sys-regex-match pattern cur)
+                         (recur (rest rem) (conj acc line) true)
+                         (recur (rest rem) (conj acc cur) matched)))))
+          final-lines (if (:matched result)
+                        (:lines result)
+                        (conj (:lines result) line))
+          new-content (str/join "\n" final-lines)]
+      (io/write-file path new-content))
+    (let [existing (if (io/exists? path) (io/read-file path) "")
+          new-content (str existing line "\n")]
+      (io/write-file path new-content))))
+
+(deftest test-lineinfile-task
+  "LineInFileTask tests"
+  (let [f (str test-dir "/lineinfile1.txt")]
+    (io/write-file f "Hello from NPKM\nHello from NPKM 234\n")
+    (lineinfile-exec f "Hello from NPKM \\d+" "Hello from NPKM 100")
+    (let [result (io/read-file f)]
+      (is (= true (str/includes? result "Hello from NPKM 100")))
+      (is (= true (str/includes? result "Hello from NPKM\n")))
+      (is (= false (str/includes? result "Hello from NPKM 234")))))
+
+  (let [f (str test-dir "/lineinfile2.txt")]
+    (io/write-file f "value=old123\n")
+    (lineinfile-exec f "value=old\\d+" "value=new456")
+    (let [result (io/read-file f)]
+      (is (= false (str/includes? result "\"")))
+      (is (= true (str/includes? result "value=new456")))))
+
+  (let [f (str test-dir "/lineinfile3.txt")]
+    (io/write-file f "existing line\n")
+    (lineinfile-exec f nil "new appended line")
+    (let [result (io/read-file f)]
+      (is (= true (str/includes? result "existing line")))
+      (is (= true (str/includes? result "new appended line")))))
+
+  (let [f (str test-dir "/lineinfile4.txt")]
+    (io/write-file f "alpha\nbeta\ngamma\n")
+    (lineinfile-exec f "delta\\d+" "delta999")
+    (let [result (io/read-file f)]
+      (is (= true (str/includes? result "delta999")))
+      (is (= true (and (str/includes? result "alpha")
+                       (str/includes? result "beta")
+                       (str/includes? result "gamma"))))))
+
+  (let [f (str test-dir "/lineinfile5.txt")]
+    (io/write-file f "server=host1:8080\nserver=host2:9090\nother=value\n")
+    (lineinfile-exec f "server=.*:\\d+" "server=newhost:3000")
+    (let [result (io/read-file f)]
+      (is (= false (or (str/includes? result "host1") (str/includes? result "host2"))))
+      (is (= true (str/includes? result "server=newhost:3000")))
+      (is (= true (str/includes? result "other=value"))))))

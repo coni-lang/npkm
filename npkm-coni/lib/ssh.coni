@@ -1,0 +1,11 @@
+(defn ssh-exec [config cmd]
+  (let [res (sys-ssh-exec config cmd)]
+    (if (= (:code res) 0)
+      (:stdout res)
+      (throw (str "SSH Exit code " (:code res) " : " (:stderr res))))))
+
+(defn ssh-upload [config local remote]
+  (sys-ssh-upload config local remote))
+
+(defn ssh-download [config remote local]
+  (sys-ssh-download config remote local))
