@@ -148,7 +148,7 @@
       (if (is-bw)
         (println "  FAILED:" msg)
         (println "\033[31m  FAILED:" msg "\033[0m"))
-      (throw msg))))
+      (sys-exit 1))))
 
 (defrecord UnzipTask [spec]
   PlaybookTask
@@ -246,8 +246,11 @@
     (let [s (:spec this)
           new-path (:path s)
           sep (if win? ";" ":")
-          current (sys-env-get "PATH")]
-      (sys-env-set "PATH" (str current sep new-path))
+          current (sys-env-get "PATH")
+          clean-current (if (str/ends-with? current sep)
+                          (subs current 0 (- (count current) 1))
+                          current)]
+      (sys-env-set "PATH" (str clean-current sep new-path))
       nil)))
 
 (defrecord PowershellTask [spec]
