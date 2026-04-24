@@ -646,10 +646,13 @@ v-val v-clean
 
 (defn run-task [raw-task runtime-vars]
   (let [interp-raw-task (walk-interp raw-task runtime-vars)
-        when-clause (if (:when interp-raw-task) (:when interp-raw-task) (get interp-raw-task "when"))
-        should-run (eval-when when-clause runtime-vars)
         match (get-task-match interp-raw-task)
         mod-args (if match (second match) {})
+        when-clause (if (:when interp-raw-task) (:when interp-raw-task)
+                      (if (get interp-raw-task "when") (get interp-raw-task "when")
+                        (if (:when mod-args) (:when mod-args)
+                          (get mod-args "when"))))
+        should-run (eval-when when-clause runtime-vars)
         ;; Check for loop items at root level or nested inside the module map
         items (if (:with_items interp-raw-task)
                 (:with_items interp-raw-task)
