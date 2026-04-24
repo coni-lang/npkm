@@ -591,6 +591,28 @@ v-val v-clean
         (str/replace (str/replace node "{{ item }}" (str item-val)) "{{item}}" (str item-val))
         node))))
 
+(defn eval-when [expr vars]
+  (if (not expr) true
+      (let [parts (str/split expr " ")]
+        (if (= (count parts) 3)
+          (let [k (first parts)
+                k-kw (keyword k)
+                op (second parts)
+                v-raw (nth parts 2)
+                v (if (and (str/starts-with? v-raw "'") (str/ends-with? v-raw "'")) (subs v-raw 1 (- (count v-raw) 1))
+                      (if (and (str/starts-with? v-raw "\"") (str/ends-with? v-raw "\"")) (subs v-raw 1 (- (count v-raw) 1)) v-raw))
+                actual (if (get vars k-kw) (get vars k-kw) (get vars k))]
+            (if (= op "==")
+              (= (str actual) v)
+              (if (= op "!=")
+                (not (= (str actual) v))
+                true)))
+          true))))
+
+(defn get-os-family []
+  (let [os (sys-os-name)]
+    (if (= os "windows") "Windows" "Unix")))
+
 (defn run-single-task
   "Executes a single task (no loop) and returns updated runtime-vars."
   [interp-raw-task runtime-vars]
@@ -624,6 +646,8 @@ v-val v-clean
 
 (defn run-task [raw-task runtime-vars]
   (let [interp-raw-task (walk-interp raw-task runtime-vars)
+        when-clause (if (:when interp-raw-task) (:when interp-raw-task) (get interp-raw-task "when"))
+        should-run (eval-when when-clause runtime-vars)
         match (get-task-match interp-raw-task)
         mod-args (if match (second match) {})
         ;; Check for loop items at root level or nested inside the module map
@@ -643,7 +667,13 @@ v-val v-clean
     (if (is-bw)
       (println "TASK [" (:name interp-raw-task) "]")
       (println "\033[36mTASK [" (:name interp-raw-task) "]\033[0m"))
-    (if items
+    (if (not should-run)
+      (do
+        (if (is-bw)
+          (println "  skipping: condition not met\n")
+          (println "\033[36m  skipping: condition not met\033[0m\n"))
+        runtime-vars)
+      (if items
       ;; Loop mode: execute task once per item
       (let [reg-key (if (:register interp-raw-task) (:register interp-raw-task) (:register mod-args))]
         (loop [rem items
@@ -658,7 +688,7 @@ v-val v-clean
                   result (run-single-task item-task curr-vars)]
               (recur (rest rem) (:vars result) (conj outputs (:output result)))))))
       ;; Normal mode: single execution
-      (:vars (run-single-task interp-raw-task runtime-vars)))))
+      (:vars (run-single-task interp-raw-task runtime-vars))))))
 
 
 (defn execute-playbook [parsed-content inventory global-vars is-bw yaml-content]
@@ -691,6 +721,8 @@ v-val v-clean
                                 :port (if (:ansible_port host-vars) (:ansible_port host-vars) 22)}
                                nil)
                     runtime-vars (merge base-vars host-vars)
+                    os-family (if (:ansible_os_family runtime-vars) (:ansible_os_family runtime-vars) (if (= host "localhost") (get-os-family) "Unix"))
+                    runtime-vars (assoc runtime-vars :ansible_os_family os-family)
                     runtime-vars (if conn-cfg (assoc runtime-vars :__connection__ conn-cfg) runtime-vars)]
                 (if is-bw
                   (println "\nPLAY [" (:name play) "]\nHOST [" host "]")

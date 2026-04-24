@@ -1,0 +1,13 @@
+name: Install Ollama
+hosts: localhost
+
+tasks:
+  - name: Install Ollama on Unix (Linux/macOS)
+    shell:
+      cmd: curl -fsSL https://ollama.com/install.sh | sh
+    when: "ansible_os_family == 'Unix'"
+
+  - name: Install Ollama on Windows
+    powershell:
+      inline: irm https://ollama.com/install.ps1 | iex
+    when: "ansible_os_family == 'Windows'"

@@ -10,6 +10,8 @@ NPKM is a lightweight, declarative automation and provisioning tool (similar to 
 - **Git Repositories**: Scans cloned repos for playbook yaml/edn (`git clone`).
 - **Directory Scanning**: Recursively lists available playbook files.
 - **Global Configs**: Interpolation from `config:` blocks into `config.*` variables.
+- **Remote SSH Orchestration**: Embedded SSH client allows running playbooks on remote hosts via `inventory.yml`.
+- **Conditional Execution**: Support for `when` clauses to target specific OS platforms or custom conditions.
 
 ## Supported Tasks
 
@@ -185,6 +187,57 @@ tasks:
     file:
       path: config.deploy_path
       state: directory
+```
+
+## Conditional Execution (OS Detection)
+
+NPKM provides built-in conditional execution using the `when:` clause. It automatically populates the `ansible_os_family` runtime variable (`Unix` or `Windows`) for both local and remote executions.
+
+```yaml
+tasks:
+  - name: Install dependencies on Linux/macOS
+    shell:
+      cmd: curl -fsSL https://example.com/install.sh | sh
+    when: "ansible_os_family == 'Unix'"
+
+  - name: Install dependencies on Windows
+    powershell:
+      inline: irm https://example.com/install.ps1 | iex
+    when: "ansible_os_family == 'Windows'"
+```
+
+## Remote SSH Orchestration (Inventories)
+
+NPKM allows you to execute your playbooks seamlessly over SSH to remote targets using an `inventory.yml` file. Just provide the inventory alongside your playbook!
+
+```yaml
+# inventory.yml
+all:
+  hosts:
+    server1:
+      ansible_host: 192.168.1.10
+      ansible_user: root
+      ansible_ssh_pass: "mysecret"
+      ansible_port: 22
+```
+
+In your playbook, define `hosts: all` or explicitly target `hosts: server1`:
+
+```yaml
+# playbook.yml
+name: Deploy Web Server
+hosts: server1
+
+tasks:
+  - name: Install nginx
+    package:
+      name: nginx
+      state: present
+```
+
+Execute by passing the inventory file using the `-i` flag:
+```bash
+./npkm-coni -i inventory.yml playbook.yml
 ```
 
 ## Advanced Features
