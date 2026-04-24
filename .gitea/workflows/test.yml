@@ -12,22 +12,10 @@ jobs:
       - name: Checkout NPKM-Coni
         uses: actions/checkout@v4
 
-      - name: Checkout Coni Compiler
-        uses: actions/checkout@v4
-        with:
-          repository: hellonico/coni-lang
-          path: coni-lang
-
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.25.x'
-          cache: false
-
-      - name: Build Coni Compiler
+      - name: Download Coni Compiler
         run: |
-          cd coni-lang
-          CGO_ENABLED=0 go build -o coni .
+          curl -fsSL -o coni https://coni-lang.org/downloads/coni-linux-x64
+          chmod +x coni
           sudo mv coni /usr/local/bin/coni
 
       - name: Run NPKM-Coni Tests
