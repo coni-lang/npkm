@@ -1,5 +1,5 @@
 name: Pull Ollama Models
-hosts: monster
+hosts: all
 
 tasks:
   - name: Pull required Ollama models

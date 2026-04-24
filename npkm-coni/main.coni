@@ -562,7 +562,16 @@ v-val v-clean
                  (parse-inventory-yaml content)
                  (read-string content))]
       data)
-    {}))
+    (if (str/includes? path ",")
+      (let [hosts (str/split path ",")
+            host-map (loop [rem hosts acc {}]
+                       (if (empty? rem) acc
+                         (let [h (str/trim (first rem))]
+                           (if (= h "")
+                             (recur (rest rem) acc)
+                             (recur (rest rem) (assoc acc h {}))))))]
+        {"all" {:hosts host-map}})
+      {"all" {:hosts {path {}}}})))
 
 (defn get-hosts [inventory target-group]
   (if (= target-group "localhost")
@@ -739,7 +748,8 @@ v-val v-clean
               p-vars (if (:vars play) (:vars play) {})
               base-vars (merge play-vars p-vars {:__debug__ is-debug})
               tasks (:tasks play)
-              target-hosts (if (and inventory (> (count inventory) 0)) (get-hosts inventory target-group) (if (= target-group "localhost") ["localhost"] [target-group]))]
+              target-hosts (if (and inventory (> (count (keys inventory)) 0)) (get-hosts inventory target-group) (if (= target-group "localhost") ["localhost"] [target-group]))]
+          (if is-debug (println "  [DEBUG] inventory:" inventory "target-hosts:" target-hosts "target-group:" target-group))
           (loop [rem-hosts target-hosts]
             (if (empty? rem-hosts)
               nil
@@ -843,7 +853,11 @@ v-val v-clean
     
     (let [pos-args-clean (filter (fn [x] (and (not (str/ends-with? x ".coni")) (not (or (= x "-i") (= x inv-file))))) pos-args)
           playbook-file (first pos-args-clean)
-          is-git? (or (str/ends-with? playbook-file ".git") (str/starts-with? playbook-file "git://") (str/starts-with? playbook-file "git@") (str/starts-with? playbook-file "ssh://git@"))]
+          is-git? (if playbook-file (or (str/ends-with? playbook-file ".git") (str/starts-with? playbook-file "git://") (str/starts-with? playbook-file "git@") (str/starts-with? playbook-file "ssh://git@")) false)]
+      (if (not playbook-file)
+        (do
+          (println "Error: No playbook file specified.")
+          (sys-exit 1)))
       (if (io/directory? playbook-file)
         (let [entries (io/read-dir playbook-file)]
           (println "Available playbooks in" playbook-file ":")
