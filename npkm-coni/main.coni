@@ -64,10 +64,17 @@
     (let [cmd (:cmd (:spec this))
           cwd (:cwd (:spec this))
           conn (:__connection__ (:spec this))
+          is-debug (:__debug__ (:spec this))
           real-cmd (if cwd (str "cd " cwd " && " cmd) cmd)]
       (if conn
         (ssh/ssh-exec conn real-cmd)
         (let [res (shell/sh real-cmd)]
+          (if is-debug
+            (do
+              (println "  [DEBUG] Command:" real-cmd)
+              (println "  [DEBUG] Exit Code:" (:code res))
+              (if (> (count (:stdout res)) 0) (println "  [DEBUG] STDOUT:\n" (str/trim (:stdout res))))
+              (if (> (count (:stderr res)) 0) (println "  [DEBUG] STDERR:\n" (str/trim (:stderr res))))))
           (if (= (:code res) 0) (:stdout res) (throw (str "Exit code " (:code res) " : " (:stderr res)))))))))
 
 (defrecord CommandTask [spec]
@@ -282,9 +289,16 @@
     (let [s (:spec this)
           inline (:inline s)
           f (:file s)
+          is-debug (:__debug__ (:spec this))
           res (if inline 
                 (shell/exec "powershell" ["-NoProfile" "-Command" inline])
                 (shell/exec "powershell" ["-NoProfile" "-File" f]))]
+      (if is-debug
+        (do
+          (println "  [DEBUG] PowerShell:" (if inline inline f))
+          (println "  [DEBUG] Exit Code:" (:code res))
+          (if (> (count (:stdout res)) 0) (println "  [DEBUG] STDOUT:\n" (str/trim (:stdout res))))
+          (if (> (count (:stderr res)) 0) (println "  [DEBUG] STDERR:\n" (str/trim (:stderr res))))))
       (if (= (:code res) 0) (:stdout res) (throw (:stderr res))))))
 
 
@@ -621,11 +635,12 @@ v-val v-clean
       (let [k (first match)
             v (second match)
             v-with-conn (if (map? v) (assoc v :__connection__ (:__connection__ runtime-vars)) v)
+            v-with-debug (if (map? v-with-conn) (assoc v-with-conn :__debug__ (:__debug__ runtime-vars)) v-with-conn)
             constructor (get playbook-task-registry k)
-            out-str (execute (constructor v-with-conn))
+            out-str (execute (constructor v-with-debug))
             reg-key (if (:register interp-raw-task) (:register interp-raw-task) (if (and (map? v) (:register v)) (:register v) nil))]
         (do
-          (if (and out-str (not (= (str/trim (str out-str)) "")))
+          (if (and (:__debug__ runtime-vars) out-str (not (= (str/trim (str out-str)) "")))
             (println (str/trim (str out-str)))
             nil)
           (if (is-bw)
@@ -694,7 +709,7 @@ v-val v-clean
       (:vars (run-single-task interp-raw-task runtime-vars))))))
 
 
-(defn execute-playbook [parsed-content inventory global-vars is-bw yaml-content]
+(defn execute-playbook [parsed-content inventory global-vars is-bw yaml-content is-debug]
   (let [plays (if (and (vector? parsed-content) (map? (first parsed-content)) (:tasks (first parsed-content)))
                 parsed-content
                 (let [play-hosts (if yaml-content (extract-hosts yaml-content) (if (map? parsed-content) (:hosts parsed-content "localhost") "localhost"))]
@@ -708,7 +723,7 @@ v-val v-clean
         (let [play (first rem-plays)
               target-group (if (:hosts play) (:hosts play) "localhost")
               p-vars (if (:vars play) (:vars play) {})
-              base-vars (merge play-vars p-vars)
+              base-vars (merge play-vars p-vars {:__debug__ is-debug})
               tasks (:tasks play)
               target-hosts (if (and inventory (> (count inventory) 0)) (get-hosts inventory target-group) (if (= target-group "localhost") ["localhost"] [target-group]))]
           (loop [rem-hosts target-hosts]
@@ -744,9 +759,10 @@ v-val v-clean
         flags (filter (fn [x] (str/starts-with? x "-")) args)
         pos-args (filter (fn [x] (not (str/starts-with? x "-"))) args)
         is-bw (some (fn [x] (= x "-bw")) flags)
+        is-debug (some (fn [x] (or (= x "-v") (= x "--verbose") (= x "-vv") (= x "--debug"))) flags)
         inv-file (loop [i 0] (if (>= i (count args)) nil (if (= (nth args i) "-i") (nth args (+ i 1)) (recur (+ i 1)))))
         inventory (if inv-file (parse-inventory inv-file) nil)]
-    (if (some (fn [x] (or (= x "-v") (= x "-V") (= x "--version"))) flags)
+    (if (some (fn [x] (or (= x "-V") (= x "--version"))) flags)
       (do
         (let [exe-path ((sys-os-args) 0)
               cdate (format-date exe-path)
@@ -843,7 +859,7 @@ v-val v-clean
                       tasks (parse-playbook real-p content)]
                   (do
                     (shell/sh (str "cd " tmp-dir))
-                    (execute-playbook tasks inventory {} is-bw content)))
+                    (execute-playbook tasks inventory {} is-bw content is-debug)))
                 (do (if is-bw (println "Error cloning git repo:" (:stderr res)) (println "\033[31mError cloning git repo:" (:stderr res) "\033[0m")) (sys-exit 1)))))
           (if (str/includes? playbook-file "http")
             (let [dest (if (or (str/ends-with? playbook-file ".yml") (str/ends-with? playbook-file ".yaml")) "tmp/remote-playbook.yml" "tmp/remote-playbook.edn")
@@ -852,14 +868,7 @@ v-val v-clean
               (if (= (:code res) 0)
                 (let [content (io/read-file dest)
                       tasks (parse-playbook dest content)]
-                  (loop [rem tasks
-                         runtime-vars {}]
-                    (if (empty? rem)
-                      (if is-bw
-                        (println "Playbook finished natively in Coni!")
-                        (println "\033[34mPlaybook finished natively in Coni!\033[0m"))
-                      (let [new-vars (run-task (first rem) runtime-vars)]
-                        (recur (rest rem) new-vars)))))
+                  (execute-playbook tasks inventory {} is-bw content is-debug))
                 (do (if is-bw (println "Failed to download playbook") (println "\033[31mFailed to download playbook\033[0m")) (sys-exit 1))))
             (if (not (io/exists? playbook-file))
               (do
@@ -867,7 +876,7 @@ v-val v-clean
                 (sys-exit 1))
               (let [content (io/read-file playbook-file)
                     tasks (parse-playbook playbook-file content)]
-                (execute-playbook tasks inventory {} is-bw content))))))))
+                (execute-playbook tasks inventory {} is-bw content is-debug))))))))
 
 )
 (run)
