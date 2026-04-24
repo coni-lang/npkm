@@ -749,7 +749,6 @@ v-val v-clean
               base-vars (merge play-vars p-vars {:__debug__ is-debug})
               tasks (:tasks play)
               target-hosts (if (and inventory (> (count (keys inventory)) 0)) (get-hosts inventory target-group) (if (= target-group "localhost") ["localhost"] [target-group]))]
-          (if is-debug (println "  [DEBUG] inventory:" inventory "target-hosts:" target-hosts "target-group:" target-group))
           (loop [rem-hosts target-hosts]
             (if (empty? rem-hosts)
               nil

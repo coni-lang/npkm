@@ -1,5 +1,5 @@
 name: Install Ollama
-hosts: monster
+hosts: all
 
 tasks:
   - name: Install Ollama on Unix (Linux/macOS)
