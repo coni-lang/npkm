@@ -1,0 +1,4 @@
+all:
+  hosts:
+    monster:
+      ansible_host: monster

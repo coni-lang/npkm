@@ -1,0 +1,10 @@
+name: Pull Ollama Models
+hosts: monster
+
+tasks:
+  - name: Pull required Ollama models
+    shell:
+      cmd: "ollama pull {{ item }}"
+    with_items:
+      - qwen3.5
+      - gemma4:26b
