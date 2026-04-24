@@ -1,5 +1,5 @@
 name: Install Ollama
-hosts: localhost
+hosts: monster
 
 tasks:
   - name: Install Ollama on Unix (Linux/macOS)
@@ -20,3 +20,10 @@ tasks:
   - name: Print Ollama version
     debug:
       msg: "Ollama is ready! Installed version: {{ ollama_version }}"
+
+  - name: Pull required Ollama models
+    shell:
+      cmd: "ollama pull {{ item }}"
+    with_items:
+      - qwen3.5
+      - gemma4:26b

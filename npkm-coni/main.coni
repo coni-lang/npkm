@@ -70,7 +70,18 @@
           is-debug (:__debug__ (:spec this))
           real-cmd (if cwd (str "cd " cwd " && " cmd) cmd)]
       (if conn
-        (ssh/ssh-exec conn real-cmd)
+        (let [port-str (if (:port conn) (str "-p " (:port conn) " ") "")
+              key-str (if (:key conn) (str "-i " (:key conn) " ") "")
+              user-str (if (:user conn) (str (:user conn) "@") "")
+              ssh-cmd (str "ssh " port-str key-str user-str (:host conn) " '" (str/replace real-cmd "'" "'\\''") "'")
+              res (shell/sh ssh-cmd)]
+          (if is-debug
+            (do
+              (println "  [DEBUG] SSH Command:" ssh-cmd)
+              (println "  [DEBUG] Exit Code:" (:code res))
+              (if (> (count (:stdout res)) 0) (println "  [DEBUG] STDOUT:\n" (str/trim (:stdout res))))
+              (if (> (count (:stderr res)) 0) (println "  [DEBUG] STDERR:\n" (str/trim (:stderr res))))))
+          (if (= (:code res) 0) (:stdout res) (throw (str "Exit code " (:code res) " : " (:stderr res)))))
         (let [res (shell/sh real-cmd)]
           (if is-debug
             (do
@@ -736,7 +747,7 @@ v-val v-clean
                     host-vars (if (and inventory (> (count inventory) 0) (not= host "localhost")) (get-host-vars inventory host) {})
                     conn-cfg (if (and (not= host "localhost") (not= host ""))
                                {:host (if (:ansible_host host-vars) (:ansible_host host-vars) host)
-                                :user (if (:ansible_user host-vars) (:ansible_user host-vars) "root")
+                                :user (if (:ansible_user host-vars) (:ansible_user host-vars) nil)
                                 :key (if (:ansible_ssh_private_key_file host-vars) (:ansible_ssh_private_key_file host-vars) nil)
                                 :password (if (:ansible_ssh_pass host-vars) (:ansible_ssh_pass host-vars) nil)
                                 :port (if (:ansible_port host-vars) (:ansible_port host-vars) 22)}
