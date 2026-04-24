@@ -11,3 +11,12 @@ tasks:
     powershell:
       inline: irm https://ollama.com/install.ps1 | iex
     when: "ansible_os_family == 'Windows'"
+
+  - name: Check Ollama version
+    shell:
+      cmd: ollama -v
+    register: ollama_version
+
+  - name: Print Ollama version
+    debug:
+      msg: "Ollama is ready! Installed version: {{ ollama_version }}"

@@ -51,8 +51,11 @@
                  curr node]
              (if (empty? rem) curr
                  (let [k (first rem)
-                       v (get vars k)]
-                   (recur (rest rem) (str/replace curr (str "var." k) (str v)))))))
+                       v (get vars k)
+                       curr-1 (str/replace curr (str "var." k) (str v))
+                       curr-2 (str/replace curr-1 (str "{{ " k " }}") (str v))
+                       curr-3 (str/replace curr-2 (str "{{" k "}}") (str v))]
+                   (recur (rest rem) curr-3)))))
         node))))
 
 (defprotocol PlaybookTask
