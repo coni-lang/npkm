@@ -1,0 +1,36 @@
+name: Build and Test NPKM-Coni
+
+on:
+  push:
+    branches:
+      - '**'
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout NPKM-Coni
+        uses: actions/checkout@v4
+
+      - name: Checkout Coni Compiler
+        uses: actions/checkout@v4
+        with:
+          repository: hellonico/coni-lang
+          path: coni-lang
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+          cache: false
+
+      - name: Build Coni Compiler
+        run: |
+          cd coni-lang
+          CGO_ENABLED=0 go build -o coni .
+          sudo mv coni /usr/local/bin/coni
+
+      - name: Run NPKM-Coni Tests
+        run: |
+          cd npkm-coni
+          coni test ...
