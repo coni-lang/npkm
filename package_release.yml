@@ -1,0 +1,95 @@
+name: Package Release
+config:
+  coni_src: /Users/nico/cool/s5/coni-lang-gitea
+  dist_dir: dist
+  temp_coni_bin: /tmp/coni-compiler
+  samba_dir: /Volumes/share/npkm
+
+tasks:
+  - name: Get build date
+    shell:
+      cmd: 'TZ="Asia/Tokyo" date "+%Y-%m-%d-%H%M" | tr -d "\n"'
+    register: build_date
+
+  - name: Print build date
+    debug:
+      msg: 'Build date is {{ build_date }}'
+
+  - name: Build latest Coni compiler from source
+    shell:
+      cmd: 'PATH="$PATH:/usr/local/go/bin:/opt/homebrew/bin" go build -o {{ config.temp_coni_bin }} .'
+      cwd: '{{ config.coni_src }}'
+
+  - name: Run tests
+    shell:
+      cmd: '{{ config.temp_coni_bin }} test ...'
+      cwd: npkm-coni
+
+  - name: Clean dist directory
+    remove:
+      path: '{{ config.dist_dir }}'
+
+  - name: Create dist directory
+    file:
+      path: '{{ config.dist_dir }}'
+      state: directory
+
+  - name: Build macOS binary
+    shell:
+      cmd: '{{ config.temp_coni_bin }} build . -o ../{{ config.dist_dir }}/npkm-coni'
+      cwd: npkm-coni
+
+  - name: Build Windows binary
+    shell:
+      cmd: 'CGO_ENABLED=0 GOOS=windows GOARCH=amd64 {{ config.temp_coni_bin }} build . -o ../{{ config.dist_dir }}/npkm-coni.exe'
+      cwd: npkm-coni
+
+  - name: Update local npkm-coni
+    copy:
+      src: '{{ config.dist_dir }}/npkm-coni'
+      dest: npkm-coni/npkm-coni
+
+  - name: Update local npkm-coni.exe
+    copy:
+      src: '{{ config.dist_dir }}/npkm-coni.exe'
+      dest: npkm-coni/npkm-coni.exe
+
+  - name: Copy README to dist
+    copy:
+      src: README.md
+      dest: '{{ config.dist_dir }}/README.md'
+
+  - name: Copy test-playbook.edn to dist
+    copy:
+      src: npkm-coni/test-playbook.edn
+      dest: '{{ config.dist_dir }}/test-playbook.edn'
+
+  - name: Copy test-playbook.yml to dist
+    copy:
+      src: test-playbook.yml
+      dest: '{{ config.dist_dir }}/test-playbook.yml'
+
+  - name: Copy install_ollama.yml to dist
+    copy:
+      src: npkm-coni/install_ollama.yml
+      dest: '{{ config.dist_dir }}/install_ollama.yml'
+
+  - name: Package Windows release zip
+    shell:
+      cmd: 'zip -r npkm-coni-windows-amd64-{{ build_date }}.zip npkm-coni.exe README.md test-playbook.edn test-playbook.yml install_ollama.yml'
+      cwd: '{{ config.dist_dir }}'
+
+  - name: Deploy to samba share
+    shell:
+      cmd: 'if [ -d "{{ config.samba_dir }}" ]; then pv npkm-coni-windows-amd64-{{ build_date }}.zip > "{{ config.samba_dir }}/npkm-coni-windows-amd64-{{ build_date }}.zip"; else echo "Samba share not mounted at {{ config.samba_dir }} — skipping deploy"; fi'
+      cwd: '{{ config.dist_dir }}'
+
+  - name: List Artifacts
+    shell:
+      cmd: 'ls -lh npkm-coni npkm-coni.exe npkm-coni-windows-amd64-{{ build_date }}.zip'
+      cwd: '{{ config.dist_dir }}'
+    register: artifacts
+
+  - name: Print Artifacts
+    debug:
+      msg: 'Build & Package Complete!\nArtifacts:\n{{ artifacts }}'
