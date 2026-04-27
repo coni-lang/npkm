@@ -72,7 +72,8 @@ cd "$DIST_DIR"
 cp "$SCRIPT_DIR/README.md" .
 cp "$SCRIPT_DIR/npkm-coni/test-playbook.edn" .
 cp "$SCRIPT_DIR/test-playbook.yml" .
-zip -r "$ARCHIVE_NAME" npkm-coni.exe README.md test-playbook.edn test-playbook.yml
+cp "$SCRIPT_DIR/npkm-coni/install_ollama.yml" .
+zip -r "$ARCHIVE_NAME" npkm-coni.exe README.md test-playbook.edn test-playbook.yml install_ollama.yml
 cd "$SCRIPT_DIR"
 
 echo ""

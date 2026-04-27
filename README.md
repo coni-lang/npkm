@@ -235,9 +235,13 @@ tasks:
       state: present
 ```
 
-Execute by passing the inventory file using the `-i` flag:
+Execute by passing the inventory file using the `-i` flag to run via SSH:
 ```bash
+# Run a playbook on remote hosts via SSH
 ./npkm-coni -i inventory.yml playbook.yml
+
+# Example: Run the bundled install_ollama.yml on your remote SSH inventory
+./npkm-coni -i inventory.yml install_ollama.yml
 ```
 
 ## Advanced Features
