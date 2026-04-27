@@ -12,6 +12,11 @@ tasks:
       cmd: curl -fsSL https://ollama.com/install.sh | sh
     when: "ansible_os_family == 'Unix'"
 
+  - name: Set OLLAMA_HOST on binerai
+    shell:
+      cmd: 'sudo mkdir -p /etc/systemd/system/ollama.service.d && echo -e "[Service]\nEnvironment=\"OLLAMA_HOST=0.0.0.0\"" | sudo tee /etc/systemd/system/ollama.service.d/override.conf && sudo systemctl daemon-reload && sudo systemctl restart ollama'
+    when: "inventory_hostname == 'binerai'"
+
   - name: Install Ollama on Windows
     powershell:
       inline: irm https://ollama.com/install.ps1 | iex

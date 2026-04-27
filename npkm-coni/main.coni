@@ -763,7 +763,7 @@ v-val v-clean
                                nil)
                     runtime-vars (merge base-vars host-vars)
                     os-family (if (:ansible_os_family runtime-vars) (:ansible_os_family runtime-vars) (if (= host "localhost") (get-os-family) "Unix"))
-                    runtime-vars (assoc runtime-vars :ansible_os_family os-family)
+                    runtime-vars (assoc runtime-vars :ansible_os_family os-family :inventory_hostname host)
                     runtime-vars (if conn-cfg (assoc runtime-vars :__connection__ conn-cfg) runtime-vars)]
                 (if is-bw
                   (println "\nPLAY [" (:name play) "]\nHOST [" host "]")
