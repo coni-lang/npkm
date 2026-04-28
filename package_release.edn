@@ -30,6 +30,10 @@
    :shell {:cmd "CONI_HOME=/Users/nico/cool/s5/coni-lang-gitea PATH=\"$PATH:/usr/local/go/bin:/opt/homebrew/bin\" CGO_ENABLED=0 GOOS=windows GOARCH=amd64 /tmp/coni-compiler build . -o ../dist/npkm-coni.exe"
            :cwd "npkm-coni"}}
 
+  {:name "Build Linux binary"
+   :shell {:cmd "CONI_HOME=/Users/nico/cool/s5/coni-lang-gitea PATH=\"$PATH:/usr/local/go/bin:/opt/homebrew/bin\" CGO_ENABLED=0 GOOS=linux GOARCH=amd64 /tmp/coni-compiler build . -o ../dist/npkm-coni-linux"
+           :cwd "npkm-coni"}}
+
   {:name "Update local npkm-coni"
    :copy {:src "dist/npkm-coni"
           :dest "npkm-coni/npkm-coni"}}
@@ -45,16 +49,16 @@
                 "test-playbook.yml"
                 "npkm-coni/install_ollama.yml"]}
 
-  {:name "Package Windows release zip"
-   :shell {:cmd "zip -r npkm-coni-windows-amd64-{{ build_date }}.zip npkm-coni.exe README.md test-playbook.edn test-playbook.yml install_ollama.yml"
+  {:name "Package release zip"
+   :shell {:cmd "zip -r npkm-coni-release-{{ build_date }}.zip npkm-coni npkm-coni-linux npkm-coni.exe README.md test-playbook.edn test-playbook.yml install_ollama.yml"
            :cwd "dist"}}
 
   {:name "Deploy to samba share"
-   :shell {:cmd "if [ -d \"/Volumes/share/npkm\" ]; then pv npkm-coni-windows-amd64-{{ build_date }}.zip > \"/Volumes/share/npkm/npkm-coni-windows-amd64-{{ build_date }}.zip\"; else echo \"Samba share not mounted at /Volumes/share/npkm — skipping deploy\"; fi"
+   :shell {:cmd "if [ -d \"/Volumes/share/npkm\" ]; then pv npkm-coni-release-{{ build_date }}.zip > \"/Volumes/share/npkm/npkm-coni-release-{{ build_date }}.zip\"; else echo \"Samba share not mounted at /Volumes/share/npkm — skipping deploy\"; fi"
            :cwd "dist"}}
 
   {:name "List Artifacts"
-   :shell {:cmd "ls -lh npkm-coni npkm-coni.exe npkm-coni-windows-amd64-{{ build_date }}.zip"
+   :shell {:cmd "ls -lh npkm-coni npkm-coni-linux npkm-coni.exe npkm-coni-release-{{ build_date }}.zip"
            :cwd "dist"}
    :register "artifacts"}
 
