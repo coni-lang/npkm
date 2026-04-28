@@ -14,5 +14,5 @@ if [ ! -f "npkm-coni/npkm-coni" ]; then
     exit 1
 fi
 
-./npkm-coni/npkm-coni package_release.edn
+./npkm-coni/npkm-coni -v package_release.edn
 

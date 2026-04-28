@@ -217,7 +217,8 @@ all:
     server1:
       ansible_host: 192.168.1.10
       ansible_user: root
-      ansible_ssh_pass: "mysecret"
+      ansible_ssh_pass: "mysecret"                   # Optional: Password authentication
+      ansible_ssh_private_key_file: "~/.ssh/id_rsa"  # Optional: SSH Key authentication
       ansible_port: 22
 ```
 

@@ -38,21 +38,12 @@
    :copy {:src "dist/npkm-coni.exe"
           :dest "npkm-coni/npkm-coni.exe"}}
 
-  {:name "Copy README to dist"
-   :copy {:src "README.md"
-          :dest "dist/README.md"}}
-
-  {:name "Copy test-playbook.edn to dist"
-   :copy {:src "npkm-coni/test-playbook.edn"
-          :dest "dist/test-playbook.edn"}}
-
-  {:name "Copy test-playbook.yml to dist"
-   :copy {:src "test-playbook.yml"
-          :dest "dist/test-playbook.yml"}}
-
-  {:name "Copy install_ollama.yml to dist"
-   :copy {:src "npkm-coni/install_ollama.yml"
-          :dest "dist/install_ollama.yml"}}
+  {:name "Copy release files to dist"
+   :shell {:cmd "cp {{ item }} dist/"}
+   :with_items ["README.md"
+                "npkm-coni/test-playbook.edn"
+                "test-playbook.yml"
+                "npkm-coni/install_ollama.yml"]}
 
   {:name "Package Windows release zip"
    :shell {:cmd "zip -r npkm-coni-windows-amd64-{{ build_date }}.zip npkm-coni.exe README.md test-playbook.edn test-playbook.yml install_ollama.yml"

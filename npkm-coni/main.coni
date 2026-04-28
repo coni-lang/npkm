@@ -70,14 +70,11 @@
           is-debug (:__debug__ (:spec this))
           real-cmd (if cwd (str "cd " cwd " && " cmd) cmd)]
       (if conn
-        (let [port-str (if (:port conn) (str "-p " (:port conn) " ") "")
-              key-str (if (:key conn) (str "-i " (:key conn) " ") "")
-              user-str (if (:user conn) (str (:user conn) "@") "")
-              ssh-cmd (str "ssh " port-str key-str user-str (:host conn) " '" (str/replace real-cmd "'" "'\\''") "'")
-              res (shell/sh ssh-cmd)]
+        (let [res (sys-ssh-exec conn real-cmd)]
           (if is-debug
             (do
-              (println "  [DEBUG] SSH Command:" ssh-cmd)
+              (println "  [DEBUG] Native SSH Command:" real-cmd)
+              (println "  [DEBUG] SSH Host:" (:host conn))
               (println "  [DEBUG] Exit Code:" (:code res))
               (if (> (count (:stdout res)) 0) (println "  [DEBUG] STDOUT:\n" (str/trim (:stdout res))))
               (if (> (count (:stderr res)) 0) (println "  [DEBUG] STDERR:\n" (str/trim (:stderr res))))))
