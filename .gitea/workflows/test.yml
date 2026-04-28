@@ -16,7 +16,9 @@ jobs:
         run: |
           curl -fsSL -o coni https://coni-lang.org/downloads/coni-linux-x64
           chmod +x coni
-          sudo mv coni /usr/local/bin/coni
+          mkdir -p bin
+          mv coni bin/coni
+          echo "$GITHUB_WORKSPACE/bin" >> $GITHUB_PATH
 
       - name: Run NPKM-Coni Tests
         run: |
