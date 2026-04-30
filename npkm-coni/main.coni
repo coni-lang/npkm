@@ -70,7 +70,8 @@
           is-debug (:__debug__ (:spec this))
           real-cmd (if cwd (str "cd " cwd " && " cmd) cmd)]
       (if conn
-        (let [res (sys-ssh-exec conn real-cmd)]
+        (let [real-conn (assoc conn :debug true)
+              res (sys-ssh-exec real-conn real-cmd)]
           (if is-debug
             (do
               (println "  [DEBUG] Native SSH Command:" real-cmd)
