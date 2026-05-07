@@ -74,10 +74,7 @@
               (if (> (count (:stdout res)) 0) (println "  [DEBUG] STDOUT:\n" (str/trim (:stdout res))))
               (if (> (count (:stderr res)) 0) (println "  [DEBUG] STDERR:\n" (str/trim (:stderr res))))))
           (if (= (:code res) 0) 
-            (do
-              (if (and (not is-debug) (> (count (str/trim (:stdout res))) 0))
-                (println (str/trim (:stdout res))))
-              (:stdout res)) 
+            (:stdout res)
             (throw (str "Exit code " (:code res) " : " (:stderr res)))))
         (let [res (shell/sh real-cmd)]
           (if is-debug
