@@ -247,6 +247,22 @@ tasks:
     when: "ansible_os_family == 'Windows'"
 ```
 
+## Privilege Escalation (become / sudo)
+
+If a task requires root privileges on a Linux or macOS target (e.g., restarting a system daemon or installing a package), you can use the `become: true` flag. This will automatically prefix the command with `sudo`.
+
+```yaml
+tasks:
+  - name: Restart rsyslog using systemd
+    become: true
+    systemd:
+      name: rsyslog
+      state: restarted
+      enabled: true
+```
+
+**Note on passwords:** NPKM currently executes SSH commands non-interactively and does not pause to prompt for a sudo password. If your remote user requires a password to use `sudo`, the command will fail. To use `become: true`, you must configure your target machine's `/etc/sudoers` file to allow passwordless sudo for the user (e.g., `ubuntu ALL=(ALL) NOPASSWD:ALL`).
+
 ## Remote SSH Orchestration (Inventories)
 
 NPKM allows you to execute your playbooks seamlessly over SSH to remote targets using an `inventory.yml` file. Just provide the inventory alongside your playbook!

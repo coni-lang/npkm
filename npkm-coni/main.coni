@@ -62,7 +62,10 @@
           cwd (:cwd (:spec this))
           conn (:__connection__ (:spec this))
           is-debug (:__debug__ (:spec this))
-          real-cmd (if cwd (str "cd " cwd " && " cmd) cmd)]
+          is-become (:__become__ (:spec this))
+          sudo-pfx (if is-become "sudo " "")
+          cmd-with-sudo (str sudo-pfx cmd)
+          real-cmd (if cwd (str "cd " cwd " && " cmd-with-sudo) cmd-with-sudo)]
       (if conn
         (let [real-conn (assoc conn :debug true)
               res (sys-ssh-exec real-conn real-cmd)]
@@ -283,9 +286,12 @@
           state (:state s)
           name (:name s)
           enabled (:enabled s)
-          state-cmd (if state (str "systemctl " state " " name) nil)
+          is-become (:__become__ s)
+          sudo-pfx (if is-become "sudo " "")
+          sys-action (if (= state "stopped") "stop" (if (= state "restarted") "restart" (if (= state "reloaded") "reload" "start")))
+          state-cmd (if state (str sudo-pfx "systemctl " sys-action " " name) nil)
           enable-cmd (if (not (nil? enabled)) 
-                       (if enabled (str "systemctl enable " name) (str "systemctl disable " name))
+                       (if enabled (str sudo-pfx "systemctl enable " name) (str sudo-pfx "systemctl disable " name))
                        nil)]
       (if enable-cmd
         (let [res (if conn (sys-ssh-exec (assoc conn :debug true) enable-cmd) (shell/sh enable-cmd))]
@@ -348,6 +354,8 @@
           state (:state s)
           mgr (if (:manager s) (:manager s) nil)
           is-win-target (if conn false win?)
+          is-become (:__become__ s)
+          sudo-pfx (if (and is-become (not is-win-target)) "sudo " "")
           cmd (if is-win-target
                 ;; Windows: try winget first (or specified manager), then choco fallback
                 (let [use-mgr (if mgr mgr "winget")]
@@ -364,9 +372,9 @@
                   (if (= pkg-mgr "brew")
                     (if (= state "absent") (str "brew uninstall " (:name s)) (str "brew install " (:name s)))
                   (if (= pkg-mgr "apt-get")
-                    (if (= state "absent") (str "apt-get remove -y " (:name s)) (str "apt-get install -y " (:name s)))
+                    (if (= state "absent") (str sudo-pfx "apt-get remove -y " (:name s)) (str sudo-pfx "apt-get install -y " (:name s)))
                   (if (= pkg-mgr "yum")
-                    (if (= state "absent") (str "yum remove -y " (:name s)) (str "yum install -y " (:name s)))
+                    (if (= state "absent") (str sudo-pfx "yum remove -y " (:name s)) (str sudo-pfx "yum install -y " (:name s)))
                     "echo 'No package manager found' && exit 1")))))
           res (if conn (sys-ssh-exec (assoc conn :debug true) cmd) (shell/sh cmd))]
       ;; On Windows, if winget fails and no manager specified, try choco
@@ -410,14 +418,16 @@
           state (:state s)
           is-win-target (if conn false win?)
           is-mac-target (if conn false mac?)
+          is-become (:__become__ s)
+          sudo-pfx (if (and is-become (not is-win-target)) "sudo " "")
           cmd (if is-win-target
                 (let [action (if (= state "stopped") "stop" "start")]
                   (str "net " action " " (:name s)))
                 (if is-mac-target
                   (let [action (if (= state "stopped") "unload" "load")]
-                    (str "launchctl " action " " (:name s)))
+                    (str sudo-pfx "launchctl " action " " (:name s)))
                   (let [action (if (= state "stopped") "stop" (if (= state "restarted") "restart" "start"))]
-                    (str "systemctl " action " " (:name s)))))]
+                    (str sudo-pfx "systemctl " action " " (:name s)))))]
        (let [res (if conn (sys-ssh-exec (assoc conn :debug true) cmd) (shell/sh cmd))]
           (if (= (:code res) 0) nil (throw (:stderr res)))))))
 
@@ -429,11 +439,13 @@
           state (:state s)
           is-win-target (if conn false win?)
           is-mac-target (if conn false mac?)
+          is-become (:__become__ s)
+          sudo-pfx (if (and is-become (not is-win-target)) "sudo " "")
           cmd (if is-win-target
                 (if (= state "absent") (str "net user " (:name s) " /delete") (str "net user " (:name s) " /add"))
                 (if is-mac-target
-                  (if (= state "absent") (str "sysadminctl -deleteUser " (:name s)) (str "sysadminctl -addUser " (:name s)))
-                  (if (= state "absent") (str "userdel " (:name s)) (str "useradd " (:name s)))))]
+                  (if (= state "absent") (str sudo-pfx "sysadminctl -deleteUser " (:name s)) (str sudo-pfx "sysadminctl -addUser " (:name s)))
+                  (if (= state "absent") (str sudo-pfx "userdel " (:name s)) (str sudo-pfx "useradd " (:name s)))))]
        (let [res (if conn (sys-ssh-exec (assoc conn :debug true) cmd) (shell/sh cmd))]
           (if (= (:code res) 0) nil (throw (:stderr res)))))))
 
@@ -731,8 +743,10 @@ v-val v-clean
             v (second match)
             v-with-conn (if (map? v) (assoc v :__connection__ (:__connection__ runtime-vars)) v)
             v-with-debug (if (map? v-with-conn) (assoc v-with-conn :__debug__ (:__debug__ runtime-vars)) v-with-conn)
+            raw-become (if (:become interp-raw-task) (:become interp-raw-task) (get interp-raw-task "become"))
+            v-with-become (if (and (map? v-with-debug) raw-become) (assoc v-with-debug :__become__ true) v-with-debug)
             constructor (get playbook-task-registry k)
-            out-str (execute (constructor v-with-debug))
+            out-str (execute (constructor v-with-become))
             reg-key (if (:register interp-raw-task) (:register interp-raw-task) (if (and (map? v) (:register v)) (:register v) nil))]
         (do
           (if (and (:__debug__ runtime-vars) out-str (not (= (str/trim (str out-str)) "")))
