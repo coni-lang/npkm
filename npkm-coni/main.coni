@@ -294,10 +294,12 @@
                        (if enabled (str sudo-pfx "systemctl enable " name) (str sudo-pfx "systemctl disable " name))
                        nil)]
       (if enable-cmd
-        (let [res (if conn (sys-ssh-exec (assoc conn :debug true) enable-cmd) (shell/sh enable-cmd))]
+        (let [real-conn (if (:__debug__ s) (assoc conn :debug true) conn)
+              res (if conn (sys-ssh-exec real-conn enable-cmd) (shell/sh enable-cmd))]
           (if (= (:code res) 0) nil (throw (:stderr res)))))
       (if state-cmd
-        (let [res (if conn (sys-ssh-exec (assoc conn :debug true) state-cmd) (shell/sh state-cmd))]
+        (let [real-conn (if (:__debug__ s) (assoc conn :debug true) conn)
+              res (if conn (sys-ssh-exec real-conn state-cmd) (shell/sh state-cmd))]
           (if (= (:code res) 0) nil (throw (:stderr res)))))
       nil)))
 

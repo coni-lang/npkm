@@ -108,6 +108,11 @@ Manage system-level daemons natively (`systemctl`, `launchctl`, or `net start`).
     name: nginx
     state: started
     enabled: true
+
+- name: Stop multiple units simultaneously (e.g., to prevent socket activation warnings)
+  systemd:
+    name: syslog.socket rsyslog.service
+    state: stopped
 ```
 
 ### `shell`, `command` & `powershell`
