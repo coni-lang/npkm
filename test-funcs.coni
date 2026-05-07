@@ -1,4 +1,0 @@
-(println "is map?" (map? {:a 1}))
-(println "is keyword?" (keyword? :a))
-(println "type string" (str :a))
-(println "name" (name :a))

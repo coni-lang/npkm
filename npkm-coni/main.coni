@@ -11,24 +11,18 @@
 (def win? (= *os* "windows"))
 (def mac? (= *os* "darwin"))
 
-#[cfg(windows)]
 (defn copy-dir [src dest]
-  (let [res (shell/sh (str "xcopy /E /I /Y \"" src "\" \"" dest "\""))]
-    (if (= (:code res) 0) nil (throw (:stderr res)))))
+  (if win?
+    (let [res (shell/sh (str "xcopy /E /I /Y \"" src "\" \"" dest "\""))]
+      (if (= (:code res) 0) nil (throw (:stderr res))))
+    (let [res (shell/sh (str "cp -R " src " " dest))]
+      (if (= (:code res) 0) nil (throw (:stderr res))))))
 
-#[cfg(not windows)]
-(defn copy-dir [src dest]
-  (let [res (shell/sh (str "cp -R " src " " dest))]
-    (if (= (:code res) 0) nil (throw (:stderr res)))))
-
-#[cfg(windows)]
 (defn format-date [path]
-  (str/trim (:stdout (shell/sh (str "powershell -Command \"(Get-Item '" path "').LastWriteTime.ToString('o')\"")))))
-
-#[cfg(not windows)]
-(defn format-date [path]
-  (let [res (shell/sh (str "date -r \"" path "\" '+%Y-%m-%dT%H:%M:%S%z' 2>/dev/null || stat -c %y \"" path "\" 2>/dev/null"))]
-    (str/trim (:stdout res))))
+  (if win?
+    (str/trim (:stdout (shell/sh (str "powershell -Command \"(Get-Item '" path "').LastWriteTime.ToString('o')\""))))
+    (let [res (shell/sh (str "date -r \"" path "\" '+%Y-%m-%dT%H:%M:%S%z' 2>/dev/null || stat -c %y \"" path "\" 2>/dev/null"))]
+      (str/trim (:stdout res)))))
 
 
 (defn is-bw []
@@ -79,7 +73,12 @@
               (println "  [DEBUG] Exit Code:" (:code res))
               (if (> (count (:stdout res)) 0) (println "  [DEBUG] STDOUT:\n" (str/trim (:stdout res))))
               (if (> (count (:stderr res)) 0) (println "  [DEBUG] STDERR:\n" (str/trim (:stderr res))))))
-          (if (= (:code res) 0) (:stdout res) (throw (str "Exit code " (:code res) " : " (:stderr res)))))
+          (if (= (:code res) 0) 
+            (do
+              (if (and (not is-debug) (> (count (str/trim (:stdout res))) 0))
+                (println (str/trim (:stdout res))))
+              (:stdout res)) 
+            (throw (str "Exit code " (:code res) " : " (:stderr res)))))
         (let [res (shell/sh real-cmd)]
           (if is-debug
             (do
@@ -87,7 +86,12 @@
               (println "  [DEBUG] Exit Code:" (:code res))
               (if (> (count (:stdout res)) 0) (println "  [DEBUG] STDOUT:\n" (str/trim (:stdout res))))
               (if (> (count (:stderr res)) 0) (println "  [DEBUG] STDERR:\n" (str/trim (:stderr res))))))
-          (if (= (:code res) 0) (:stdout res) (throw (str "Exit code " (:code res) " : " (:stderr res)))))))))
+          (if (= (:code res) 0) 
+            (do
+              (if (and (not is-debug) (> (count (str/trim (:stdout res))) 0))
+                (println (str/trim (:stdout res))))
+              (:stdout res)) 
+            (throw (str "Exit code " (:code res) " : " (:stderr res)))))))))
 
 (defrecord CommandTask [spec]
   PlaybookTask
@@ -331,9 +335,11 @@
   PlaybookTask
   (execute [this]
     (let [s (:spec this)
+          conn (:__connection__ s)
           state (:state s)
           mgr (if (:manager s) (:manager s) nil)
-          cmd (if win?
+          is-win-target (if conn false win?)
+          cmd (if is-win-target
                 ;; Windows: try winget first (or specified manager), then choco fallback
                 (let [use-mgr (if mgr mgr "winget")]
                   (if (= use-mgr "choco")
@@ -343,7 +349,9 @@
                       (str "winget install --id " (:name s) " --silent --accept-package-agreements --accept-source-agreements"))))
                 ;; Unix: detect package manager
                 (let [pkg-mgr (if mgr mgr
-                                (str/trim (:stdout (shell/sh "if command -v brew >/dev/null 2>&1; then echo brew; elif command -v apt-get >/dev/null 2>&1; then echo apt-get; elif command -v yum >/dev/null 2>&1; then echo yum; fi"))))]
+                                (let [detect-cmd "if command -v brew >/dev/null 2>&1; then echo brew; elif command -v apt-get >/dev/null 2>&1; then echo apt-get; elif command -v yum >/dev/null 2>&1; then echo yum; fi"
+                                      detect-res (if conn (sys-ssh-exec (assoc conn :debug true) detect-cmd) (shell/sh detect-cmd))]
+                                  (str/trim (:stdout detect-res))))]
                   (if (= pkg-mgr "brew")
                     (if (= state "absent") (str "brew uninstall " (:name s)) (str "brew install " (:name s)))
                   (if (= pkg-mgr "apt-get")
@@ -351,56 +359,73 @@
                   (if (= pkg-mgr "yum")
                     (if (= state "absent") (str "yum remove -y " (:name s)) (str "yum install -y " (:name s)))
                     "echo 'No package manager found' && exit 1")))))
-          res (shell/sh cmd)]
+          res (if conn (sys-ssh-exec (assoc conn :debug true) cmd) (shell/sh cmd))]
       ;; On Windows, if winget fails and no manager specified, try choco
-      (if (and win? (not= (:code res) 0) (nil? mgr))
+      (if (and is-win-target (not= (:code res) 0) (nil? mgr))
         (let [choco-cmd (if (= state "absent") (str "choco uninstall -y " (:name s)) (str "choco install -y " (:name s)))
-              res2 (shell/sh choco-cmd)]
+              res2 (if conn (sys-ssh-exec (assoc conn :debug true) choco-cmd) (shell/sh choco-cmd))]
           (if (= (:code res2) 0) nil (throw (:stderr res2))))
         (if (= (:code res) 0) nil (throw (:stderr res)))))))
 
 (defrecord CronTask [spec]
   PlaybookTask
   (execute [this]
-    (let [s (:spec this)]
-      (if win?
-        (throw "Cron task not natively supported on Windows via npkm yet")
-        (let [marker (str "# NPKM: " (:name s))
-              job (str (:schedule s) " " (:job s))
-              state (:state s)
-              sh-cmd (if (= state "absent")
-                       (str "crontab -l 2>/dev/null | grep -v '" marker "' | grep -v '" job "' | crontab -")
-                       (str "(crontab -l 2>/dev/null | grep -v '" marker "' | grep -v '" job "'; echo '" marker "'; echo '" job "') | crontab -"))
-              res (shell/sh sh-cmd)]
-          (if (= (:code res) 0) nil (throw (:stderr res))))))))
+    (let [s (:spec this)
+          conn (:__connection__ s)
+          marker (str "# NPKM: " (:name s))
+          schedule (str (if (:minute s) (:minute s) "*") " "
+                        (if (:hour s) (:hour s) "*") " "
+                        (if (:day s) (:day s) "*") " "
+                        (if (:month s) (:month s) "*") " "
+                        (if (:weekday s) (:weekday s) "*"))
+          job (if (:schedule s) 
+                (str (:schedule s) " " (:job s))
+                (str schedule " " (:job s)))
+          state (:state s)
+          sh-cmd (if (= state "absent")
+                   (str "crontab -l 2>/dev/null | grep -v '" marker "' | grep -v '" job "' | crontab -")
+                   (str "(crontab -l 2>/dev/null | grep -v '" marker "' | grep -v '" job "'; echo '" marker "'; echo '" job "') | crontab -"))]
+      (if conn
+        (let [res (sys-ssh-exec (assoc conn :debug true) sh-cmd)]
+          (if (= (:code res) 0) nil (throw (:stderr res))))
+        (if win?
+          (throw "Cron task not natively supported on Windows via npkm yet")
+          (let [res (shell/sh sh-cmd)]
+            (if (= (:code res) 0) nil (throw (:stderr res)))))))))
 
 (defrecord ServiceTask [spec]
   PlaybookTask
   (execute [this]
     (let [s (:spec this)
+          conn (:__connection__ s)
           state (:state s)
-          cmd (if win?
+          is-win-target (if conn false win?)
+          is-mac-target (if conn false mac?)
+          cmd (if is-win-target
                 (let [action (if (= state "stopped") "stop" "start")]
                   (str "net " action " " (:name s)))
-                (if mac?
+                (if is-mac-target
                   (let [action (if (= state "stopped") "unload" "load")]
                     (str "launchctl " action " " (:name s)))
                   (let [action (if (= state "stopped") "stop" (if (= state "restarted") "restart" "start"))]
                     (str "systemctl " action " " (:name s)))))]
-       (let [res (shell/sh cmd)]
+       (let [res (if conn (sys-ssh-exec (assoc conn :debug true) cmd) (shell/sh cmd))]
           (if (= (:code res) 0) nil (throw (:stderr res)))))))
 
 (defrecord UserTask [spec]
   PlaybookTask
   (execute [this]
     (let [s (:spec this)
+          conn (:__connection__ s)
           state (:state s)
-          cmd (if win?
+          is-win-target (if conn false win?)
+          is-mac-target (if conn false mac?)
+          cmd (if is-win-target
                 (if (= state "absent") (str "net user " (:name s) " /delete") (str "net user " (:name s) " /add"))
-                (if mac?
+                (if is-mac-target
                   (if (= state "absent") (str "sysadminctl -deleteUser " (:name s)) (str "sysadminctl -addUser " (:name s)))
                   (if (= state "absent") (str "userdel " (:name s)) (str "useradd " (:name s)))))]
-       (let [res (shell/sh cmd)]
+       (let [res (if conn (sys-ssh-exec (assoc conn :debug true) cmd) (shell/sh cmd))]
           (if (= (:code res) 0) nil (throw (:stderr res)))))))
 
 (defrecord TemplateTask [spec]
@@ -794,7 +819,7 @@ v-val v-clean
                         result (run-single-task item-task curr-vars)]
                     (recur (rest rem) (:vars result) (conj outputs (:output result)))))))
             ;; Normal mode: single execution
-            (:vars (run-single-task interp-raw-task runtime-vars)))))))
+            (:vars (run-single-task interp-raw-task runtime-vars))))))))
 
 
 (defn execute-playbook [parsed-content inventory global-vars is-bw yaml-content is-debug]
