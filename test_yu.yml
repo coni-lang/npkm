@@ -1,0 +1,14 @@
+name: Restart Cron on yu
+hosts: yu
+
+tasks:
+  - name: Restart cron service safely
+    become: true
+    systemd:
+      name: cron
+      state: restarted
+      enabled: true
+
+  - name: Verify cron status
+    shell:
+      cmd: systemctl status cron | grep "Active:"

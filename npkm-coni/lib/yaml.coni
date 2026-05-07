@@ -163,8 +163,8 @@
                           ;; No sub-map — treat as a list key (original behavior)
                           (recur (rest rem) task-str closed-mod key-name "" acc)))))
 
-                  ;; === KEY:VALUE PAIR inside a module ===
-                  (if (and (> (count task-str) 0) (> (count mod-str) 0)
+                  ;; === KEY:VALUE PAIR ===
+                  (if (and (> (count task-str) 0)
                            (= (count list-key) 0) (str/includes? trim-line ":"))
                     (let [colon-idx (str/index-of trim-line ":")
                           k-str (str/trim (str/substring trim-line 0 colon-idx))
@@ -177,15 +177,19 @@
                               multi-val (first multi-res)
                               next-rem (second multi-res)
                               v-val (str "\"" (edn-escape multi-val) "\"")
-                              new-mod-str (str mod-str ":" k-str " " v-val " ")]
-                          (recur next-rem task-str new-mod-str list-key list-str acc))
+                              new-kv-str (str ":" k-str " " v-val " ")]
+                          (if (> (count mod-str) 0)
+                            (recur next-rem task-str (str mod-str new-kv-str) list-key list-str acc)
+                            (recur next-rem (str task-str new-kv-str) mod-str list-key list-str acc)))
                         (let [v-val (if (or (= v-clean "true") (= v-clean "false")
                                        (str/starts-with? v-clean "[")
                                        (str/starts-with? v-clean "{"))
                                   v-clean
                                   (str "\"" (edn-escape v-clean) "\""))
-                              new-mod-str (str mod-str ":" k-str " " v-val " ")]
-                          (recur (rest rem) task-str new-mod-str list-key list-str acc))))
+                              new-kv-str (str ":" k-str " " v-val " ")]
+                          (if (> (count mod-str) 0)
+                            (recur (rest rem) task-str (str mod-str new-kv-str) list-key list-str acc)
+                            (recur (rest rem) (str task-str new-kv-str) mod-str list-key list-str acc)))))
 
                     ;; Unrecognized line — skip
                     (recur (rest rem) task-str mod-str list-key list-str acc)))))))))))
