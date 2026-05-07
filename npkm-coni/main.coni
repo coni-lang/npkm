@@ -626,6 +626,46 @@ v-val v-clean
         (str/replace (str/replace node "{{ item }}" (str item-val)) "{{item}}" (str item-val))
         node))))
 
+(defn load-included-tasks [source]
+  "Load a task list from a local .yml file, a directory, or a git repo URL."
+  (let [is-git (or (str/ends-with? source ".git")
+                   (str/starts-with? source "git://")
+                   (str/starts-with? source "git@")
+                   (str/starts-with? source "ssh://git@"))]
+    (if is-git
+      ;; --- git repo: clone into tmp and look for tasks file ---
+      (let [tmp-dir "tmp/npkm-include-coni"]
+        (shell/sh (str "rm -rf " tmp-dir))
+        (let [res (shell/sh (str "git clone " source " " tmp-dir))]
+          (if (= (:code res) 0)
+            (let [p1 (str tmp-dir "/tasks.yml")
+                  p2 (str tmp-dir "/playbook.yml")
+                  p3 (str tmp-dir "/playbook.yaml")
+                  real-p (if (io/exists? p1) p1 (if (io/exists? p2) p2 p3))
+                  content (io/read-file real-p)
+                  parsed (read-string (yaml/yaml-to-edn content))]
+              (if (vector? parsed) parsed []))
+            (throw (str "include_tasks: failed to clone " source ": " (:stderr res))))))
+      ;; --- local directory: use first .yml found ---
+      (if (io/directory? source)
+        (let [entries (io/read-dir source)
+              yml-files (filter (fn [e] (or (str/ends-with? e ".yml") (str/ends-with? e ".yaml"))) entries)
+              first-file (first yml-files)]
+          (if first-file
+            (let [content (io/read-file (str source "/" first-file))
+                  parsed (read-string (yaml/yaml-to-edn content))]
+              (if (vector? parsed) parsed []))
+            (throw (str "include_tasks: no .yml files found in directory: " source))))
+        ;; --- local file ---
+        (if (io/exists? source)
+          (let [content (io/read-file source)
+                is-yaml (or (str/ends-with? source ".yml") (str/ends-with? source ".yaml"))
+                parsed (if is-yaml
+                         (read-string (yaml/yaml-to-edn content))
+                         (read-string content))]
+            (if (vector? parsed) parsed []))
+          (throw (str "include_tasks: file not found: " source)))))))
+
 (defn eval-when [expr vars]
   (if (not expr) true
       (let [parts (str/split expr " ")]
@@ -681,53 +721,80 @@ v-val v-clean
         {:vars runtime-vars :output ""}))))
 
 (defn run-task [raw-task runtime-vars]
-  (let [interp-raw-task (walk-interp raw-task runtime-vars)
-        match (get-task-match interp-raw-task)
-        mod-args (if match (second match) {})
-        when-clause (if (:when interp-raw-task) (:when interp-raw-task)
-                      (if (get interp-raw-task "when") (get interp-raw-task "when")
-                        (if (:when mod-args) (:when mod-args)
-                          (get mod-args "when"))))
-        should-run (eval-when when-clause runtime-vars)
-        ;; Check for loop items at root level or nested inside the module map
-        items (if (:with_items interp-raw-task)
-                (:with_items interp-raw-task)
-                (if (:with_items mod-args)
-                  (:with_items mod-args)
-                  (let [loop-val (if (:loop interp-raw-task) (:loop interp-raw-task) (:loop mod-args))]
-                    (if loop-val
-                      ;; If loop is a string referencing a runtime var, resolve it
-                      (if (string? loop-val)
-                        (let [resolved (get runtime-vars loop-val)]
-                          (if (vector? resolved) resolved
-                              (if resolved [resolved] [])))
-                        (if (vector? loop-val) loop-val []))
-                      nil))))]
-    (if (is-bw)
-      (println "TASK [" (:name interp-raw-task) "]")
-      (println "\033[36mTASK [" (:name interp-raw-task) "]\033[0m"))
-    (if (not should-run)
-      (do
+  ;; --- include_tasks: load sub-tasks from a file, directory, or git repo ---
+  (let [include-src (if (:include_tasks raw-task) (:include_tasks raw-task)
+                      (get raw-task "include_tasks"))]
+    (if include-src
+      (let [interp-src (walk-interp include-src runtime-vars)
+            when-clause (if (:when raw-task) (:when raw-task) (get raw-task "when"))
+            should-run (eval-when when-clause runtime-vars)]
         (if (is-bw)
-          (println "  skipping: condition not met\n")
-          (println "\033[36m  skipping: condition not met\033[0m\n"))
-        runtime-vars)
-      (if items
-      ;; Loop mode: execute task once per item
-      (let [reg-key (if (:register interp-raw-task) (:register interp-raw-task) (:register mod-args))]
-        (loop [rem items
-               curr-vars runtime-vars
-               outputs []]
-          (if (empty? rem)
-            (if reg-key
-              (assoc curr-vars reg-key outputs)
-              curr-vars)
-            (let [item (first rem)
-                  item-task (replace-item-placeholders interp-raw-task item)
-                  result (run-single-task item-task curr-vars)]
-              (recur (rest rem) (:vars result) (conj outputs (:output result)))))))
-      ;; Normal mode: single execution
-      (:vars (run-single-task interp-raw-task runtime-vars))))))
+          (println "TASK [" (:name raw-task) "]")
+          (println "\033[36mTASK [" (:name raw-task) "]\033[0m"))
+        (if (not should-run)
+          (do
+            (if (is-bw)
+              (println "  skipping: condition not met\n")
+              (println "\033[36m  skipping: condition not met\033[0m\n"))
+            runtime-vars)
+          (do
+            (if (is-bw)
+              (println (str "  including tasks from: " interp-src "\n"))
+              (println (str "\033[32m  including tasks from: " interp-src "\033[0m\n")))
+            (let [included-tasks (load-included-tasks interp-src)]
+              (loop [rem included-tasks
+                     curr-vars runtime-vars]
+                (if (empty? rem)
+                  curr-vars
+                  (recur (rest rem) (run-task (first rem) curr-vars))))))))
+      ;; --- normal task processing ---
+      (let [interp-raw-task (walk-interp raw-task runtime-vars)
+            match (get-task-match interp-raw-task)
+            mod-args (if match (second match) {})
+            when-clause (if (:when interp-raw-task) (:when interp-raw-task)
+                          (if (get interp-raw-task "when") (get interp-raw-task "when")
+                            (if (:when mod-args) (:when mod-args)
+                              (get mod-args "when"))))
+            should-run (eval-when when-clause runtime-vars)
+            ;; Check for loop items at root level or nested inside the module map
+            items (if (:with_items interp-raw-task)
+                    (:with_items interp-raw-task)
+                    (if (:with_items mod-args)
+                      (:with_items mod-args)
+                      (let [loop-val (if (:loop interp-raw-task) (:loop interp-raw-task) (:loop mod-args))]
+                        (if loop-val
+                          ;; If loop is a string referencing a runtime var, resolve it
+                          (if (string? loop-val)
+                            (let [resolved (get runtime-vars loop-val)]
+                              (if (vector? resolved) resolved
+                                  (if resolved [resolved] [])))
+                            (if (vector? loop-val) loop-val []))
+                          nil))))]
+        (if (is-bw)
+          (println "TASK [" (:name interp-raw-task) "]")
+          (println "\033[36mTASK [" (:name interp-raw-task) "]\033[0m"))
+        (if (not should-run)
+          (do
+            (if (is-bw)
+              (println "  skipping: condition not met\n")
+              (println "\033[36m  skipping: condition not met\033[0m\n"))
+            runtime-vars)
+          (if items
+            ;; Loop mode: execute task once per item
+            (let [reg-key (if (:register interp-raw-task) (:register interp-raw-task) (:register mod-args))]
+              (loop [rem items
+                     curr-vars runtime-vars
+                     outputs []]
+                (if (empty? rem)
+                  (if reg-key
+                    (assoc curr-vars reg-key outputs)
+                    curr-vars)
+                  (let [item (first rem)
+                        item-task (replace-item-placeholders interp-raw-task item)
+                        result (run-single-task item-task curr-vars)]
+                    (recur (rest rem) (:vars result) (conj outputs (:output result)))))))
+            ;; Normal mode: single execution
+            (:vars (run-single-task interp-raw-task runtime-vars)))))))
 
 
 (defn execute-playbook [parsed-content inventory global-vars is-bw yaml-content is-debug]
@@ -839,6 +906,9 @@ v-val v-clean
         (println "  user:         Manage OS users.")
         (println "  service:      Manage cross-platform background services.")
         (println "  template:     Deploy templated files replacing {{ key }} with Map vars.")
+        (println "  include_tasks: Include and execute tasks from a .yml file, directory, or git repo.")
+        (println "                { include_tasks: path/to/tasks.yml, when?: condition }")
+        (println "                Supports local files, directories (first .yml used), and git repo URLs.")
         (println "\nExample Playbook:")
         (println "  tasks:")
         (println "    - name: Ensure target directory exists")

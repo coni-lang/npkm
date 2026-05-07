@@ -32,6 +32,7 @@ NPKM is a lightweight, declarative automation and provisioning tool (similar to 
 | `user` | Integrates useradd, sysadminctl, net user |
 | `archive` | Native `zip` operations without shell dependencies |
 | `template` | Deploy templated files with mapped configuration properties |
+| `include_tasks` | Include & execute tasks from a local file, directory, or git repo |
 
 ## Task Reference & Examples
 
@@ -171,6 +172,46 @@ Provide real-time execution outputs or forcefully term execution conditions.
 - name: Stop on unsupported OS
   fail:
     msg: "Halting execution: OS not supported."
+```
+
+### `include_tasks`
+Dynamically include a list of tasks from a separate `.yml` file, a local directory (first `.yml` found), or a remote git repository. Combine with `when:` to load tasks conditionally.
+
+**Local file:**
+```yaml
+tasks:
+  - name: Include web server setup
+    include_tasks: tasks/web_tasks.yml
+    when: "ansible_os_family == 'Unix'"
+```
+
+**Local directory (first `.yml` file is used):**
+```yaml
+tasks:
+  - name: Include all tasks in the db folder
+    include_tasks: tasks/database/
+```
+
+**Remote git repository:**
+```yaml
+tasks:
+  - name: Pull shared tasks from private repo
+    include_tasks: git@github.com:myorg/common-tasks.git
+    when: "env == 'production'"
+```
+
+The included file must be a flat YAML list of tasks (no `hosts:` or `plays:` wrapping):
+```yaml
+# web_tasks.yml
+- name: Install nginx
+  package:
+    name: nginx
+    state: present
+
+- name: Start nginx
+  service:
+    name: nginx
+    state: started
 ```
 
 ## Global Configuration Interpolation
