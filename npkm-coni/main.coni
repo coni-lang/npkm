@@ -279,9 +279,21 @@
   PlaybookTask
   (execute [this]
     (let [s (:spec this)
-          cmd (str "systemctl " (:state s) " " (:name s))
-          res (shell/sh cmd)]
-      (if (= (:code res) 0) nil (throw (:stderr res))))))
+          conn (:__connection__ s)
+          state (:state s)
+          name (:name s)
+          enabled (:enabled s)
+          state-cmd (if state (str "systemctl " state " " name) nil)
+          enable-cmd (if (not (nil? enabled)) 
+                       (if enabled (str "systemctl enable " name) (str "systemctl disable " name))
+                       nil)]
+      (if enable-cmd
+        (let [res (if conn (sys-ssh-exec (assoc conn :debug true) enable-cmd) (shell/sh enable-cmd))]
+          (if (= (:code res) 0) nil (throw (:stderr res)))))
+      (if state-cmd
+        (let [res (if conn (sys-ssh-exec (assoc conn :debug true) state-cmd) (shell/sh state-cmd))]
+          (if (= (:code res) 0) nil (throw (:stderr res)))))
+      nil)))
 
 (defrecord PathTask [spec]
   PlaybookTask
