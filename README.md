@@ -373,6 +373,9 @@ Provide a single local YAML/EDN file, a directory containing playbooks, a mix of
 # Run a specific local playbook
 ./npkm-coni test-playbook.yml
 
+# Run with verbose debugging output (prints exact command executions, exit codes, and stdout/stderr)
+./npkm-coni --verbose test-playbook.yml
+
 # Run all playbooks inside a directory
 ./npkm-coni ./playbooks/
 
