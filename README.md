@@ -379,6 +379,48 @@ Provide a single local YAML/EDN file, a directory containing playbooks, a mix of
 
 # Advanced Features
 
+## Native Templating (Variables & Loops)
+
+NPKM-Coni ships with a robust, context-aware templating engine. The `template:` module automatically merges your global configuration, your runtime environment, and your host-specific variables and exposes them to your template files.
+
+You can define variables directly beneath your hosts in your `inventory.yml`:
+
+```yaml
+web_servers:
+  hosts:
+    server1:
+      ansible_host: 10.0.0.1
+      # Custom host variables:
+      listen_port: 8080
+      worker_processes: 4
+```
+
+Then, you can loop over an array of templates using the `loop:` directive. The engine will transparently inject your host variables (like `{{ listen_port }}`), global configuration variables (like `{{ config.domain }}`), and the built-in host target (`{{ inventory_hostname }}`) right into your `.j2` template files without requiring you to manually pass them inside the playbook!
+
+```yaml
+config:
+  domain: mysite.com
+
+tasks:
+  - name: Render service configurations
+    template:
+      src: "templates/{{ item }}.conf.j2"
+      dest: "/etc/services/{{ item }}.conf"
+    loop:
+      - web
+      - db
+      - api
+```
+
+Inside your `templates/web.conf.j2` file, you can freely use the context variables:
+
+```nginx
+server_name {{ inventory_hostname }};
+domain {{ config.domain }};
+port {{ listen_port }};
+workers {{ worker_processes }};
+```
+
 ## Multi-Play Architecture (Multiple Servers)
 
 You can define multiple, independent plays within a single YAML playbook, allowing you to deploy to completely different servers sequentially in a single execution! 
