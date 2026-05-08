@@ -356,7 +356,7 @@ tasks:
         worker_processes: 4
 ```
 
-## Usage
+# Usage
 
 Provide a single local YAML/EDN file, a directory containing playbooks, a mix of files and folders, a remote HTTP/HTTPS link, or an SSH/Git path. When you pass a directory, NPKM recursively lists and evaluates all playbook files inside it!
 
@@ -375,4 +375,16 @@ Provide a single local YAML/EDN file, a directory containing playbooks, a mix of
 
 # Run directly from a remote web server
 ./npkm-coni https://raw.githubusercontent.com/user/npkm/main/playbook.yml
+```
+
+## Documentation Generation
+
+You can automatically generate Markdown documentation with Mermaid graphs for your playbooks and inventory using the `--doc` flag.
+
+```bash
+# Generate documentation for a playbook and print to stdout
+./npkm-coni --doc test-playbook.yml
+
+# Generate documentation for multiple playbooks with an inventory and save to a file
+./npkm-coni -i inventory.yml --doc web.yml db.yml > doc.md
 ```

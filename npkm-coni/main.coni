@@ -846,6 +846,91 @@ v-val v-clean
             ;; Normal mode: single execution
             (:vars (run-single-task interp-raw-task runtime-vars))))))))
 
+(defn clean-mermaid-text [txt]
+  (str/replace (str/replace (str txt) "\"" "'") "\n" " "))
+
+(defn doc-tasks [tasks prefix acc parent-id]
+  (loop [rem tasks
+         curr-acc acc
+         prev-id parent-id
+         idx 0]
+    (if (empty? rem)
+      {:acc curr-acc :last-id prev-id}
+      (let [t (first rem)
+            name (if (:name t) (clean-mermaid-text (:name t)) (str "Task_" prefix "_" idx))
+            node-id (str prefix "_T" idx)
+            include-src (if (:include_tasks t) (:include_tasks t) (get t "include_tasks"))]
+        (if include-src
+          (let [when-clause (if (:when t) (str " (when: " (:when t) ")") "")
+                subgraph-id (str prefix "_inc" idx)
+                node-def (str "  " subgraph-id "[\"Include: " include-src when-clause "\"]\n")
+                edge (if prev-id (str "  " prev-id " --> " subgraph-id "\n") "")
+                new-acc (str curr-acc node-def edge)
+                is-git (or (str/ends-with? include-src ".git") (str/starts-with? include-src "git://") (str/starts-with? include-src "git@") (str/starts-with? include-src "ssh://git@"))
+                inc-tasks (load-included-tasks include-src)]
+            (if (> (count inc-tasks) 0)
+              (let [sub-start (str "  subgraph sub_" subgraph-id " [\"" (if is-git "Remote: " "Local: ") include-src "\"]\n")
+                    sub-res (doc-tasks inc-tasks (str prefix "_" idx) "" nil)
+                    sub-end "  end\n"
+                    full-acc (str new-acc sub-start (:acc sub-res) sub-end)]
+                (recur (rest rem) full-acc subgraph-id (+ idx 1)))
+              (recur (rest rem) new-acc subgraph-id (+ idx 1))))
+          (let [module-name (if (get-task-match t) (first (get-task-match t)) "unknown")
+                when-clause (if (:when t) (str " (when: " (:when t) ")") "")
+                node-def (str "  " node-id "[\"" module-name ": " name when-clause "\"]\n")
+                edge (if prev-id (str "  " prev-id " --> " node-id "\n") "")
+                new-acc (str curr-acc node-def edge)]
+            (recur (rest rem) new-acc node-id (+ idx 1))))))))
+
+(defn generate-doc-inventory [inventory]
+  (if (not inventory)
+    ""
+    (let [groups (keys inventory)]
+      (loop [rem groups
+             acc ""]
+        (if (empty? rem)
+          (str "### Inventory\n```mermaid\ngraph TD\n" acc "```\n\n")
+          (let [g (first rem)
+                hosts-map (if (and (get inventory g) (:hosts (get inventory g))) (:hosts (get inventory g)) {})
+                hosts (keys hosts-map)]
+            (recur (rest rem)
+                   (str acc "  subgraph " g "\n"
+                        (loop [h-rem hosts h-acc ""]
+                          (if (empty? h-rem) h-acc
+                              (recur (rest h-rem) (str h-acc "    " (first h-rem) "\n"))))
+                        "  end\n"))))))))
+
+(defn generate-doc-playbook [playbook-file parsed-content yaml-content]
+  (let [is-yaml (or (str/ends-with? playbook-file ".yml") (str/ends-with? playbook-file ".yaml"))
+        cfg (if is-yaml (yaml/extract-config yaml-content) {})
+        cfg-str (if (> (count (keys cfg)) 0)
+                  (let [k-list (keys cfg)]
+                    (loop [rem k-list
+                           acc "### Variables\n| Name | Value |\n|---|---|\n"]
+                      (if (empty? rem)
+                        (str acc "\n")
+                        (let [k (first rem)
+                              v (get cfg k)]
+                          (recur (rest rem) (str acc "| `" k "` | `" v "` |\n"))))))
+                  "")
+        plays (if (and (vector? parsed-content) (map? (first parsed-content)) (:tasks (first parsed-content)))
+                parsed-content
+                (let [play-hosts (if yaml-content (extract-hosts yaml-content) (if (map? parsed-content) (:hosts parsed-content "localhost") "localhost"))]
+                   [{:name "Default Play" :hosts play-hosts :tasks (if (map? parsed-content) (:tasks parsed-content) parsed-content)}]))]
+    (loop [rem-plays plays
+           p-idx 0
+           acc (str cfg-str "### Playbook Flow: " playbook-file "\n```mermaid\ngraph TD\n")]
+      (if (empty? rem-plays)
+        (str acc "```\n\n")
+        (let [play (first rem-plays)
+              play-id (str "P" p-idx)
+              play-name (if (:name play) (clean-mermaid-text (:name play)) (str "Play_" p-idx))
+              play-hosts (if (:hosts play) (:hosts play) "localhost")
+              play-def (str "  " play-id "[\"Play: " play-name " (hosts: " play-hosts ")\"]\n")
+              tasks (if (:tasks play) (:tasks play) [])
+              res (doc-tasks tasks play-id "" play-id)
+              new-acc (str acc play-def (:acc res))]
+          (recur (rest rem-plays) (+ p-idx 1) new-acc))))))
 
 (defn execute-playbook [parsed-content inventory global-vars is-bw yaml-content is-debug]
   (let [plays (if (and (vector? parsed-content) (map? (first parsed-content)) (:tasks (first parsed-content)))
@@ -914,6 +999,7 @@ v-val v-clean
         (println "Options:")
         (println "  -v    prints version (compiled at date)")
         (println "  -h    shows help and supported tasks")
+        (println "  --doc generates markdown and mermaid documentation for playbook and inventory")
         (println "  -bw   disable color output")
         (println "\nSupported Playbook Tasks:")
         (println "  get_url:      Download a file from HTTP/HTTPS.")
@@ -970,12 +1056,26 @@ v-val v-clean
     
     (let [pos-args-clean (filter (fn [x] (and (not (str/ends-with? x ".coni")) (not (or (= x "-i") (= x inv-file))))) pos-args)
           playbook-file (first pos-args-clean)
-          is-git? (if playbook-file (or (str/ends-with? playbook-file ".git") (str/starts-with? playbook-file "git://") (str/starts-with? playbook-file "git@") (str/starts-with? playbook-file "ssh://git@")) false)]
-      (if (not playbook-file)
+          is-git? (if playbook-file (or (str/ends-with? playbook-file ".git") (str/starts-with? playbook-file "git://") (str/starts-with? playbook-file "git@") (str/starts-with? playbook-file "ssh://git@")) false)
+          is-doc? (some (fn [x] (= x "--doc")) flags)]
+      (if is-doc?
         (do
-          (println "Error: No playbook file specified.")
-          (sys-exit 1)))
-      (if (io/directory? playbook-file)
+          (println "# NPKM Documentation\n")
+          (if inventory (print (generate-doc-inventory inventory)))
+          (loop [rem pos-args-clean]
+            (if (empty? rem)
+              (sys-exit 0)
+              (let [pf (first rem)
+                    content (io/read-file pf)
+                    tasks (parse-playbook pf content)]
+                (print (generate-doc-playbook pf tasks content))
+                (recur (rest rem))))))
+        (do
+          (if (not playbook-file)
+            (do
+              (println "Error: No playbook file specified.")
+              (sys-exit 1)))
+          (if (io/directory? playbook-file)
         (let [entries (io/read-dir playbook-file)]
           (println "Available playbooks in" playbook-file ":")
           (loop [rem entries
@@ -1019,9 +1119,9 @@ v-val v-clean
               (do
                 (if is-bw (println "Error: Playbook file not found:" playbook-file) (println "\033[31mError: Playbook file not found:" playbook-file "\033[0m"))
                 (sys-exit 1))
-              (let [content (io/read-file playbook-file)
-                    tasks (parse-playbook playbook-file content)]
-                (execute-playbook tasks inventory {} is-bw content is-debug))))))))
+                  (let [content (io/read-file playbook-file)
+                        tasks (parse-playbook playbook-file content)]
+                    (execute-playbook tasks inventory {} is-bw content is-debug))))))))))
 
 )
 (run)
