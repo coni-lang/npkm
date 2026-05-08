@@ -1057,15 +1057,15 @@ v-val v-clean
         flags (filter (fn [x] (str/starts-with? x "-")) args)
         pos-args (filter (fn [x] (not (str/starts-with? x "-"))) args)
         is-bw (some (fn [x] (= x "-bw")) flags)
-        is-debug (some (fn [x] (or (= x "-v") (= x "--verbose") (= x "-vv") (= x "--debug"))) flags)
+        is-debug (some (fn [x] (or (= x "--verbose") (= x "--debug"))) flags)
         inv-file (loop [i 0] (if (>= i (count args)) nil (if (= (nth args i) "-i") (nth args (+ i 1)) (recur (+ i 1)))))
         inventory (if inv-file (parse-inventory inv-file) nil)]
-    (if (some (fn [x] (or (= x "-V") (= x "--version"))) flags)
+    (if (some (fn [x] (or (= x "-v") (= x "-V") (= x "--version"))) flags)
       (do
         (let [exe-path ((sys-os-args) 0)
               cdate (format-date exe-path)
               display-date (if (> (count cdate) 0) cdate "unknown date")]
-          (println (str "npkm version: development (compiled " display-date ")")))
+          (println (str "npkm version: 1.5 \"Quantum Weaver\" (compiled " display-date ")")))
         (sys-exit 0))
       nil)
     (if (or (some (fn [x] (or (= x "-h") (= x "--help"))) flags) (empty? args))
