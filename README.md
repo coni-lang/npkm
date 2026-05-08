@@ -379,6 +379,33 @@ Provide a single local YAML/EDN file, a directory containing playbooks, a mix of
 
 # Advanced Features
 
+## Multi-Play Architecture (Multiple Servers)
+
+You can define multiple, independent plays within a single YAML playbook, allowing you to deploy to completely different servers sequentially in a single execution! 
+
+The built-in parser relies on standard Ansible indentation to dynamically separate plays. Define your distinct plays at the root indentation (`0` spaces), and assign their target `hosts:` and `tasks:` blocks immediately beneath them.
+
+```yaml
+- name: Common Setup
+  hosts: all
+  tasks:
+    - name: Ensure baseline tools are installed
+      package:
+        name: [git, vim]
+
+- name: Web Setup
+  hosts: web_servers
+  tasks:
+    - name: Start nginx
+      systemd:
+        name: nginx
+        state: started
+```
+
+In the above example, NPKM natively evaluates the first play against the `all` group in your inventory, and then seamlessly pivots its connection context to run the second play strictly against `web_servers`.
+
+*(Note: Legacy single-play YAML playbooks that omit root plays are fully backward compatible and execute automatically inside a implicit "Default Play".)*
+
 ## Documentation Generation
 
 You can automatically generate Markdown documentation with Mermaid graphs for your playbooks and inventory using the `--doc` flag. The generator also automatically extracts configuration variables and lists them in a dedicated Markdown table!
