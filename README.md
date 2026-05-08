@@ -13,7 +13,9 @@ NPKM is a lightweight, declarative automation and provisioning tool (similar to 
 - **Remote SSH Orchestration**: Embedded SSH client allows running playbooks on remote hosts via `inventory.yml`.
 - **Conditional Execution**: Support for `when` clauses to target specific OS platforms or custom conditions.
 
-## What's New in Latest Release
+## Release History
+
+### v1.5 "Quantum Weaver" (Latest)
 - **[Native Templating (Variables & Loops)](#native-templating-variables--loops)**: Context-aware template injection using global configs, host vars, and loop iteration.
 - **[Multi-Play Architecture](#multi-play-architecture-multiple-servers)**: Deploy to multiple, different servers within a single playbook run.
 - **[Documentation Generation](#documentation-generation)**: Auto-generate markdown and Mermaid graphs (`--doc`).
