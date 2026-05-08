@@ -533,8 +533,16 @@
                               c3 (str/replace c2 p3 (str v))
                               c4 (str/replace c3 p4 (str v))]
                           (recur (rest rem) c4))))]
-          (io/write-file (:dest s) final)
-          nil)
+          (let [conn (:__connection__ runtime-vars)
+                dest (:dest s)]
+            (if conn
+              (let [clean-name (str/replace (str/replace dest "/" "-") " " "_")
+                    tmp-file (str "/tmp/npkm-tmpl-" clean-name)]
+                (io/write-file tmp-file final)
+                (ssh/ssh-upload conn tmp-file dest)
+                (shell/sh (str "rm '" tmp-file "'")))
+              (io/write-file dest final))
+            nil))
         (throw "Template task requires src and vars")))))
 
 ;; yaml-to-edn is provided by libs/yaml/src/yaml.coni (yaml/yaml-to-edn)
