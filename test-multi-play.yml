@@ -1,0 +1,13 @@
+- name: Common Setup
+  hosts: localhost
+  tasks:
+    - name: install common stuff
+      debug:
+        msg: "Common tasks running on all"
+
+- name: DB Setup
+  hosts: db_servers
+  tasks:
+    - name: install postgres
+      debug:
+        msg: "Specific tasks running on DB servers"

@@ -80,7 +80,7 @@
               ;; Not deeper indented — stop
               [acc rem])))))))
 
-(defn yaml-to-edn
+(defn yaml-tasks-to-edn
   "Converts YAML playbook content to an EDN string representation.
    Handles top-level task definitions with module sub-keys containing
    key:value pairs and list items (- value). Returns a string that can
@@ -193,6 +193,61 @@
 
                     ;; Unrecognized line — skip
                     (recur (rest rem) task-str mod-str list-key list-str acc)))))))))))
+
+(defn is-multi-play? [content]
+  (let [lines (str/split (str content) "\n")]
+    (loop [rem lines
+           found-root-name false]
+      (if (empty? rem)
+        false
+        (let [line (first rem)
+              trim-l (str/trim line)
+              indent (get-indent line)]
+          (if (or (= trim-l "") (str/starts-with? trim-l "#"))
+            (recur (rest rem) found-root-name)
+            (if (and (= indent 0) (str/starts-with? trim-l "- name:"))
+              (recur (rest rem) true)
+              (if (and found-root-name (= indent 2) (or (str/starts-with? trim-l "hosts:") (str/starts-with? trim-l "tasks:")))
+                true
+                (if (= indent 0)
+                  (recur (rest rem) false)
+                  (recur (rest rem) found-root-name))))))))))
+
+(defn parse-multi-plays [content]
+  (let [lines (str/split (str content) "\n")]
+    (loop [rem lines
+           current-name ""
+           current-hosts "localhost"
+           current-tasks ""
+           plays-acc "["]
+      (if (empty? rem)
+        (let [tasks-edn (if (> (count current-tasks) 0) (yaml-tasks-to-edn current-tasks) "[]")
+              final-play (if (> (count current-name) 0) (str "{:name \"" current-name "\" :hosts \"" current-hosts "\" :tasks " tasks-edn "}") "")]
+          (str plays-acc final-play "]"))
+        (let [line (first rem)
+              trim-l (str/trim line)
+              indent (get-indent line)]
+          (if (and (= indent 0) (str/starts-with? trim-l "- name:"))
+            (let [tasks-edn (if (> (count current-tasks) 0) (yaml-tasks-to-edn current-tasks) "[]")
+                  prev-play (if (> (count current-name) 0) 
+                              (str "{:name \"" current-name "\" :hosts \"" current-hosts "\" :tasks " tasks-edn "} ")
+                              "")
+                  new-name (str/trim (str/substring trim-l 7 (count trim-l)))
+                  clean-name (strip-quotes new-name)]
+              (recur (rest rem) clean-name "localhost" "" (str plays-acc prev-play)))
+            (if (and (= indent 2) (str/starts-with? trim-l "hosts:"))
+              (let [hosts-val (str/trim (str/substring trim-l 6 (count trim-l)))
+                    clean-hosts (strip-quotes hosts-val)]
+                (recur (rest rem) current-name clean-hosts current-tasks plays-acc))
+              (if (and (= indent 2) (str/starts-with? trim-l "tasks:"))
+                (recur (rest rem) current-name current-hosts current-tasks plays-acc)
+                (let [outdented (if (>= indent 4) (str/substring line 4 (count line)) line)]
+                  (recur (rest rem) current-name current-hosts (str current-tasks outdented "\n") plays-acc))))))))))
+
+(defn yaml-to-edn [content]
+  (if (is-multi-play? content)
+    (parse-multi-plays content)
+    (yaml-tasks-to-edn content)))
 
 (defn extract-config
   "Extracts config key-value pairs from YAML content.

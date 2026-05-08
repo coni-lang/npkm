@@ -1,0 +1,10 @@
+tasks:
+  - name: Setup DB
+    labels: ["db", "setup"]
+    debug:
+      msg: "Setting up database"
+
+  - name: Setup Web
+    labels: ["web", "setup"]
+    debug:
+      msg: "Setting up web server"
