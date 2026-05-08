@@ -388,3 +388,12 @@ You can automatically generate Markdown documentation with Mermaid graphs for yo
 # Generate documentation for multiple playbooks with an inventory and save to a file
 ./npkm-coni -i inventory.yml --doc web.yml db.yml > doc.md
 ```
+
+## Automatic Logging
+
+NPKM-Coni automatically records and archives the output of every playbook execution natively! 
+
+Every time you run the tool, your complete execution trace is intercepted in the background. Once the run finishes (or upon failure), the logs are automatically stripped of ANSI color codes and saved as a plain-text log inside your local `~/.npkm/` directory.
+
+- **Log Path Format:** `~/.npkm/YYYY-MM-DD_HH-MM-SS.log`
+- **Clean output:** The log preserves all standard output minus the terminal color formatting for perfect readability in text editors.

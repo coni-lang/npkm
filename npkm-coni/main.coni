@@ -6,6 +6,43 @@
 (require "lib/yaml.coni" :as yaml)
 (require "lib/ssh.coni" :as ssh)
 
+;; --- Global Logger ---
+(def original-println println)
+(def original-print print)
+(def original-sys-exit sys-exit)
+(def global-log-acc (atom ""))
+
+(defn strip-colors [txt]
+  (let [t1 (str/replace txt "\033[31m" "")
+        t2 (str/replace t1 "\033[32m" "")
+        t3 (str/replace t2 "\033[33m" "")
+        t4 (str/replace t3 "\033[34m" "")
+        t5 (str/replace t4 "\033[35m" "")
+        t6 (str/replace t5 "\033[36m" "")
+        t7 (str/replace t6 "\033[0m" "")]
+    t7))
+
+(defn println [& args]
+  (let [msg (str/join " " args)]
+    (original-println msg)
+    (swap! global-log-acc str (strip-colors msg) "\n")))
+
+(defn print [& args]
+  (let [msg (str/join " " args)]
+    (original-print msg)
+    (swap! global-log-acc str (strip-colors msg))))
+
+(defn dump-logs []
+  (let [log-dir (str (sys-env-get "HOME") "/.npkm")
+        date-str (str/trim (:stdout (shell/sh "date '+%Y-%m-%d_%H-%M-%S'")))
+        log-path (str log-dir "/" date-str ".log")]
+    (io/make-dir log-dir)
+    (io/write-file log-path @global-log-acc)))
+
+(defn sys-exit [code]
+  (dump-logs)
+  (original-sys-exit code))
+
 ;; --- Platform helpers (compile-time, like Rust cfg) ---
 (def *os* (sys-os-name))
 (def win? (= *os* "windows"))
@@ -1125,4 +1162,5 @@ v-val v-clean
 
 )
 (run)
+(dump-logs)
 
