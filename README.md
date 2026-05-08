@@ -377,9 +377,11 @@ Provide a single local YAML/EDN file, a directory containing playbooks, a mix of
 ./npkm-coni https://raw.githubusercontent.com/user/npkm/main/playbook.yml
 ```
 
+# Advanced Features
+
 ## Documentation Generation
 
-You can automatically generate Markdown documentation with Mermaid graphs for your playbooks and inventory using the `--doc` flag.
+You can automatically generate Markdown documentation with Mermaid graphs for your playbooks and inventory using the `--doc` flag. The generator also automatically extracts configuration variables and lists them in a dedicated Markdown table!
 
 ```bash
 # Generate documentation for a playbook and print to stdout
@@ -389,7 +391,24 @@ You can automatically generate Markdown documentation with Mermaid graphs for yo
 ./npkm-coni -i inventory.yml --doc web.yml db.yml > doc.md
 ```
 
-## Automatic Logging
+## Task Filtering (`--labels` and `--names`)
+
+You can isolate and conditionally execute specific parts of your playbooks using task filtering, similar to Ansible's tags. 
+
+If you use `--labels`, the engine will only run tasks containing a matching tag in their `:labels` array. With `--names`, it executes tasks that match exactly.
+
+```bash
+# Only run tasks with the "db" label
+./npkm-coni test-playbook.yml --labels db
+
+# Run tasks labeled either "db" or "setup"
+./npkm-coni test-playbook.yml --labels db,setup
+
+# Only run the task explicitly named "Setup DB"
+./npkm-coni test-playbook.yml --names "Setup DB"
+```
+
+## Automatic Background Logging
 
 NPKM-Coni automatically records and archives the output of every playbook execution natively! 
 
