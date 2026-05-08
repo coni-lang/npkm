@@ -34,6 +34,10 @@
    :shell {:cmd "CONI_HOME=/Users/nico/cool/s5/coni-lang-gitea PATH=\"$PATH:/usr/local/go/bin:/opt/homebrew/bin\" CGO_ENABLED=0 GOOS=linux GOARCH=amd64 /tmp/coni-compiler build . -o ../dist/npkm-coni-linux"
            :cwd "npkm-coni"}}
 
+  {:name "Patch macOS RPATHs and copy libmlx.dylib"
+   :shell {:cmd "install_name_tool -delete_rpath /Users/nico/Library/Python/3.9/lib/python/site-packages/mlx/lib dist/npkm-coni 2>/dev/null || true && install_name_tool -delete_rpath /Users/nico/cool/s5/coni-lang-gitea/evaluator dist/npkm-coni 2>/dev/null || true && install_name_tool -add_rpath @executable_path/../lib dist/npkm-coni 2>/dev/null || true && install_name_tool -add_rpath @executable_path dist/npkm-coni 2>/dev/null || true && install_name_tool -delete_rpath /Users/nico/Library/Python/3.9/lib/python/site-packages/mlx/lib dist/libmlx_c.dylib 2>/dev/null || true && install_name_tool -add_rpath @loader_path/../lib dist/libmlx_c.dylib 2>/dev/null || true && install_name_tool -add_rpath @loader_path dist/libmlx_c.dylib 2>/dev/null || true && cp /Users/nico/Library/Python/3.9/lib/python/site-packages/mlx/lib/libmlx.dylib dist/ || true"
+           :cwd "."}}
+
   {:name "Update local npkm-coni"
    :copy {:src "dist/npkm-coni"
           :dest "npkm-coni/npkm-coni"}}
@@ -50,7 +54,7 @@
                 "npkm-coni/install_ollama.yml"]}
 
   {:name "Package release zip"
-   :shell {:cmd "zip -r npkm-coni-release-{{ build_date }}.zip npkm-coni npkm-coni-linux npkm-coni.exe README.md test-playbook.edn test-playbook.yml install_ollama.yml"
+   :shell {:cmd "zip -r npkm-coni-release-{{ build_date }}.zip npkm-coni npkm-coni-linux npkm-coni.exe README.md test-playbook.edn test-playbook.yml install_ollama.yml libmlx_c.dylib libmlx.dylib"
            :cwd "dist"}}
 
   {:name "Deploy to samba share"
