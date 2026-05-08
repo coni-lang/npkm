@@ -117,3 +117,19 @@
         res (yaml/edn-escape s)]
     ;; edn-escape should escape quotes
     (is (= "hello \\\"world\\\"" res))))
+
+;; ============================================================
+;; MULTI-PLAY TESTS
+;; ============================================================
+
+(deftest test-multi-play-parsing
+  (let [yml "- name: Common Setup\n  hosts: localhost\n  tasks:\n    - name: install common\n      debug:\n        msg: ok\n\n- name: DB Setup\n  hosts: db_servers\n  tasks:\n    - name: install db\n      debug:\n        msg: ok"
+        edn-str (yaml/yaml-to-edn yml)
+        parsed (read-string edn-str)]
+    (is (= 2 (count parsed)) "Should parse 2 plays")
+    (is (= "Common Setup" (:name (first parsed))) "First play name")
+    (is (= "localhost" (:hosts (first parsed))) "First play hosts")
+    (is (= "install common" (:name (first (:tasks (first parsed))))) "First task in first play")
+    (is (= "DB Setup" (:name (second parsed))) "Second play name")
+    (is (= "db_servers" (:hosts (second parsed))) "Second play hosts")
+    (is (= "install db" (:name (first (:tasks (second parsed))))) "First task in second play")))
