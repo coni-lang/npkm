@@ -496,43 +496,45 @@
   (execute [this]
     (let [s (:spec this)
           content (io/read-file (:src s))
-          vars (:vars s)]
-      (if (and vars content)
-        (if (map? vars)
-          ;; vars is a parsed YAML map (e.g., {:name "NPKM"})
-          (let [var-keys (keys vars)
-                final (loop [rem var-keys
-                             curr content]
-                        (if (empty? rem)
-                          curr
-                          (let [k (first rem)
-                                v (get vars k)
-                                k-str (if (str/starts-with? (str k) ":")
-                                        (subs (str k) 1 (count (str k)))
-                                        (str k))
-                                p1 (str "{{ " k-str " }}")
-                                p2 (str "{{" k-str "}}")
-                                c1 (str/replace curr p1 (str v))
-                                c2 (str/replace c1 p2 (str v))]
-                            (recur (rest rem) c2))))]
-            (io/write-file (:dest s) final)
-            nil)
-          ;; Legacy: vars is a comma-separated string "k=v,k2=v2"
-          (let [kv-pairs (str/split (str vars) ",")]
-            (loop [rem kv-pairs
-                   curr content]
-              (if (empty? rem)
-                (do
-                  (io/write-file (:dest s) curr)
-                  nil)
-                (let [pair (str/split (first rem) "=")
-                      k (str/trim (if (> (count pair) 0) (first pair) ""))
-                      v (str/trim (if (> (count pair) 1) (second pair) ""))
-                      p1 (str "{{ " k " }}")
-                      p2 (str "{{" k "}}")
-                      c1 (str/replace curr p1 v)
-                      c2 (str/replace c1 p2 v)]
-                  (recur (rest rem) c2))))))
+          runtime-vars (if (:__vars__ s) (:__vars__ s) {})
+          task-vars (if (:vars s)
+                      (if (map? (:vars s)) (:vars s)
+                        (let [kv-pairs (str/split (str (:vars s)) ",")
+                              parsed-vars (loop [rem kv-pairs acc {}]
+                                            (if (empty? rem)
+                                              acc
+                                              (let [pair (str/split (first rem) "=")
+                                                    k (if (> (count pair) 0) (first pair) "")
+                                                    v (if (> (count pair) 1) (second pair) "")
+                                                    k-trim (str/trim k)
+                                                    v-trim (str/trim v)]
+                                                (recur (rest rem) (assoc acc k-trim v-trim)))))]
+                          parsed-vars))
+                      {})
+          vars (merge runtime-vars task-vars)]
+      (if content
+        (let [var-keys (keys vars)
+              final (loop [rem var-keys
+                           curr content]
+                      (if (empty? rem)
+                        curr
+                        (let [k (first rem)
+                              v (get vars k)
+                              k-str (if (str/starts-with? (str k) ":")
+                                      (subs (str k) 1 (count (str k)))
+                                      (str k))
+                              p1 (str "{{ " k-str " }}")
+                              p2 (str "{{" k-str "}}")
+                              c1 (str/replace curr p1 (str v))
+                              c2 (str/replace c1 p2 (str v))
+                              ;; Also support config.var mapping for global config backward compatibility
+                              p3 (str "{{ config." k-str " }}")
+                              p4 (str "{{config." k-str "}}")
+                              c3 (str/replace c2 p3 (str v))
+                              c4 (str/replace c3 p4 (str v))]
+                          (recur (rest rem) c4))))]
+          (io/write-file (:dest s) final)
+          nil)
         (throw "Template task requires src and vars")))))
 
 ;; yaml-to-edn is provided by libs/yaml/src/yaml.coni (yaml/yaml-to-edn)
@@ -556,7 +558,7 @@
                 (read-string (yaml/yaml-to-edn interp-content))
                 (let [parsed (read-string interp-content)]
                   (if (:tasks parsed) (:tasks parsed) parsed)))]
-      res)))
+      {:tasks res :cfg cfg})))
 
 
 
@@ -673,11 +675,15 @@ v-val v-clean
             []))))))
 
 (defn get-host-vars [inventory host-name]
-  (let [all-hosts (if (and (get inventory "all") (:hosts (get inventory "all")))
-                    (:hosts (get inventory "all"))
-                    {})
-        host-data (get all-hosts host-name)]
-    (if host-data host-data {})))
+  (let [groups (keys inventory)]
+    (loop [rem groups
+           acc {}]
+      (if (empty? rem)
+        acc
+        (let [g (first rem)
+              hosts (if (and (get inventory g) (:hosts (get inventory g))) (:hosts (get inventory g)) {})
+              host-data (if (get hosts host-name) (get hosts host-name) {})]
+          (recur (rest rem) (merge acc host-data)))))))
 
 (defn extract-hosts [content]
   (let [lines (str/split content "\n")]
@@ -787,8 +793,9 @@ v-val v-clean
             v-with-debug (if (map? v-with-conn) (assoc v-with-conn :__debug__ (:__debug__ runtime-vars)) v-with-conn)
             raw-become (if (:become interp-raw-task) (:become interp-raw-task) (get interp-raw-task "become"))
             v-with-become (if (and (map? v-with-debug) raw-become) (assoc v-with-debug :__become__ true) v-with-debug)
+            v-with-vars (if (map? v-with-become) (assoc v-with-become :__vars__ runtime-vars) v-with-become)
             constructor (get playbook-task-registry k)
-            out-str (execute (constructor v-with-become))
+            out-str (execute (constructor v-with-vars))
             reg-key (if (:register interp-raw-task) (:register interp-raw-task) (if (and (map? v) (:register v)) (:register v) nil))]
         (do
           (if (and (:__debug__ runtime-vars) out-str (not (= (str/trim (str out-str)) "")))
@@ -1145,8 +1152,8 @@ v-val v-clean
               (sys-exit 0)
               (let [pf (first rem)
                     content (io/read-file pf)
-                    tasks (parse-playbook pf content)]
-                (print (generate-doc-playbook pf tasks content))
+                    parsed-data (parse-playbook pf content)]
+                (print (generate-doc-playbook pf (:tasks parsed-data) content))
                 (recur (rest rem))))))
         (do
           (if (not playbook-file)
@@ -1179,10 +1186,12 @@ v-val v-clean
                       p3 (str tmp-dir "/playbook.edn")
                       real-p (if (io/exists? p1) p1 (if (io/exists? p2) p2 p3))
                       content (io/read-file real-p)
-                      tasks (parse-playbook real-p content)]
+                      parsed-data (parse-playbook real-p content)
+                      tasks (:tasks parsed-data)
+                      cfg (:cfg parsed-data)]
                   (do
                     (shell/sh (str "cd " tmp-dir))
-                    (execute-playbook tasks inventory {} is-bw content is-debug)))
+                    (execute-playbook tasks inventory cfg is-bw content is-debug)))
                 (do (if is-bw (println "Error cloning git repo:" (:stderr res)) (println "\033[31mError cloning git repo:" (:stderr res) "\033[0m")) (sys-exit 1)))))
           (if (str/includes? playbook-file "http")
             (let [dest (if (or (str/ends-with? playbook-file ".yml") (str/ends-with? playbook-file ".yaml")) "tmp/remote-playbook.yml" "tmp/remote-playbook.edn")
@@ -1190,16 +1199,20 @@ v-val v-clean
                   res (shell/sh cmd)]
               (if (= (:code res) 0)
                 (let [content (io/read-file dest)
-                      tasks (parse-playbook dest content)]
-                  (execute-playbook tasks inventory {} is-bw content is-debug))
+                      parsed-data (parse-playbook dest content)
+                      tasks (:tasks parsed-data)
+                      cfg (:cfg parsed-data)]
+                  (execute-playbook tasks inventory cfg is-bw content is-debug))
                 (do (if is-bw (println "Failed to download playbook") (println "\033[31mFailed to download playbook\033[0m")) (sys-exit 1))))
             (if (not (io/exists? playbook-file))
               (do
                 (if is-bw (println "Error: Playbook file not found:" playbook-file) (println "\033[31mError: Playbook file not found:" playbook-file "\033[0m"))
                 (sys-exit 1))
                   (let [content (io/read-file playbook-file)
-                        tasks (parse-playbook playbook-file content)]
-                    (execute-playbook tasks inventory {} is-bw content is-debug))))))))))
+                        parsed-data (parse-playbook playbook-file content)
+                        tasks (:tasks parsed-data)
+                        cfg (:cfg parsed-data)]
+                    (execute-playbook tasks inventory cfg is-bw content is-debug))))))))))
 
 )
 (run)
