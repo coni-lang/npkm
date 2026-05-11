@@ -1,10 +1,11 @@
 #!/usr/bin/env coni
 (require "libs/os/src/io.coni" :as io)
+(require "libs/os/src/os.coni" :as os)
 (require "libs/os/src/shell.coni" :as shell)
 (require "libs/cli/src/cli.coni" :as cli)
 (require "libs/str/src/str.coni" :as str)
-(require "lib/yaml.coni" :as yaml)
-(require "lib/ssh.coni" :as ssh)
+(require "libs/yaml/src/yaml.coni" :as yaml)
+(require "libs/ssh/src/ssh.coni" :as ssh)
 
 ;; --- Global Logger ---
 (def original-println println)
@@ -36,8 +37,8 @@
     (swap! global-log-acc str (strip-colors msg))))
 
 (defn dump-logs []
-  (let [log-dir (str (sys-env-get "HOME") "/.npkm")
-        date-str (str/trim (:stdout (shell/sh "date '+%Y-%m-%d_%H-%M-%S'")))
+  (let [log-dir (str (os/get-home-dir) "/.npkm")
+        date-str (os/get-date)
         log-path (str log-dir "/" date-str ".log")]
     (io/make-dir log-dir)
     (io/write-file log-path @global-log-acc)))
