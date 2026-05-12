@@ -10,15 +10,16 @@
 
 (deftest test-replace-regex
   "Test various string replace-regex scenarios"
-  (is (= "REPLACED world" (str/replace-regex "hello world" "^hello" "REPLACED")))
-  (is (= "hello REPLACED" (str/replace-regex "hello world" "world$" "REPLACED")))
-  (is (= "hllo" (str/replace-regex "hello" "e" "")))
-  (is (= "a_b_c" (str/replace-regex "a b c" "\\s" "_")))
-  (is (= "XbXcXdX" (str/replace-regex "aabcaad" "a*" "X")))
-  (is (= "X bit X" (str/replace-regex "cat bit dog" "cat|dog" "X")))
-  (is (= "192-168-1-1" (str/replace-regex "192.168.1.1" "\\." "-")))
-  (is (= "X X X" (str/replace-regex "Hello HELLO hello" "(?i)hello" "X")))
-  (is (= "line1\nREPLACED\nline3" (str/replace-regex "line1\nline2\nline3" "line2" "REPLACED"))))
+  (are [expected text regex replacement] (= expected (str/replace-regex text regex replacement))
+    "REPLACED world"         "hello world"       "^hello"    "REPLACED"
+    "hello REPLACED"         "hello world"       "world$"    "REPLACED"
+    "hllo"                   "hello"             "e"         ""
+    "a_b_c"                  "a b c"             "\\s"       "_"
+    "XbXcXdX"                "aabcaad"           "a*"        "X"
+    "X bit X"                "cat bit dog"       "cat|dog"   "X"
+    "192-168-1-1"            "192.168.1.1"       "\\."       "-"
+    "X X X"                  "Hello HELLO hello" "(?i)hello" "X"
+    "line1\nREPLACED\nline3" "line1\nline2\nline3" "line2"   "REPLACED"))
 
 (deftest test-replace-task-file
   "ReplaceTask integration tests (file-based)"

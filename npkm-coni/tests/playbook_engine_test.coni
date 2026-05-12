@@ -20,25 +20,28 @@
 
 (deftest test-extract-hosts
   "Tests extracting target hosts from a playbook"
-  (is (= "server1" (engine/extract-hosts "hosts: server1\ntasks:\n  - name: test")))
-  (is (= "localhost" (engine/extract-hosts "tasks:\n  - name: test"))))
+  (are [expected content] (= expected (engine/extract-hosts content))
+    "server1"   "hosts: server1\ntasks:\n  - name: test"
+    "localhost" "tasks:\n  - name: test"))
 
 (deftest test-resolve-var-path
   "Tests the deep property resolution logic used for playbook loop items"
   (let [runtime-vars {"config" {"services" ["git" "java" "intellij"]}
                       "flat" "value"}]
-    (is (= ["git" "java" "intellij"] (engine/resolve-var-path runtime-vars "config.services")))
-    (is (= "value" (engine/resolve-var-path runtime-vars "flat")))
-    (is (= nil (engine/resolve-var-path runtime-vars "config.missing")))
-    (is (= nil (engine/resolve-var-path runtime-vars "missing")))))
+    (are [expected path] (= expected (engine/resolve-var-path runtime-vars path))
+      ["git" "java" "intellij"] "config.services"
+      "value"                   "flat"
+      nil                       "config.missing"
+      nil                       "missing")))
 
 (deftest test-loop-playbook
   "Tests the end-to-end execution of a playbook with loop items"
   (let [bin-path (if (io/exists? "/tmp/coni-compiler") "/tmp/coni-compiler" "coni")
         res (shell/sh (str "env CONI_LIB=/Users/nico/cool/coni-lang/libs " bin-path " main.coni tests/test-loop.yml"))]
     (is (= 0 (:code res)))
-    (is (= true (str/includes? (:stdout res) "Installing git")))
-    (is (= true (str/includes? (:stdout res) "Installing java")))
-    (is (= true (str/includes? (:stdout res) "Installing intellij")))
-    (is (= true (str/includes? (:stdout res) "Copying index.html")))
-    (is (= true (str/includes? (:stdout res) "Copying app.js")))))
+    (are [substr] (= true (str/includes? (:stdout res) substr))
+      "Installing git"
+      "Installing java"
+      "Installing intellij"
+      "Copying index.html"
+      "Copying app.js")))
