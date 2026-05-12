@@ -17,4 +17,6 @@ tasks:
   - name: Copy app files
     debug:
       msg: "Copying {{ item }}"
-    loop: config.files
+    items:
+      - index.html
+      - app.js

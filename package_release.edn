@@ -51,10 +51,11 @@
    :with_items ["README.md"
                 "npkm-coni/test-playbook.edn"
                 "test-playbook.yml"
+                "npkm-coni/tests/test-loop.yml"
                 "npkm-coni/install_ollama.yml"]}
 
   {:name "Package release zip"
-   :shell {:cmd "zip -r npkm-coni-release-{{ build_date }}.zip npkm-coni npkm-coni-linux npkm-coni.exe README.md test-playbook.edn test-playbook.yml install_ollama.yml libmlx_c.dylib libmlx.dylib"
+   :shell {:cmd "zip -r npkm-coni-release-{{ build_date }}.zip npkm-coni npkm-coni-linux npkm-coni.exe README.md test-playbook.edn test-playbook.yml test-loop.yml install_ollama.yml libmlx_c.dylib libmlx.dylib"
            :cwd "dist"}}
 
   {:name "Deploy to samba share"

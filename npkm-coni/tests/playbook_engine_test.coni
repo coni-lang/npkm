@@ -1,5 +1,6 @@
 (require "libs/str/src/str.coni" :as str)
 (require "libs/os/src/shell.coni" :as shell)
+(require "libs/os/src/io.coni" :as io)
 (defn walk-interp [node vars]
   (if (map? node)
     (loop [ks (keys node)
@@ -128,7 +129,8 @@
 
 (deftest test-loop-playbook
   "Tests the end-to-end execution of a playbook with loop items"
-  (let [res (shell/sh "coni main.coni tests/test-loop.yml")]
+  (let [bin-path (if (io/exists? "/tmp/coni-compiler") "/tmp/coni-compiler" "coni")
+        res (shell/sh (str "env CONI_LIB=/Users/nico/cool/coni-lang/libs " bin-path " main.coni tests/test-loop.yml"))]
     (is (= 0 (:code res)))
     (is (= true (str/includes? (:stdout res) "Installing git")))
     (is (= true (str/includes? (:stdout res) "Installing java")))

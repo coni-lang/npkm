@@ -896,19 +896,20 @@ v-val v-clean
             skip-task? (or skip-labels? skip-names?)
             should-run (and should-run (not skip-task?))
             ;; Check for loop items at root level or nested inside the module map
-            items (if (:with_items interp-raw-task)
-                    (:with_items interp-raw-task)
-                    (if (:with_items mod-args)
-                      (:with_items mod-args)
-                      (let [loop-val (if (:loop interp-raw-task) (:loop interp-raw-task) (:loop mod-args))]
-                        (if loop-val
-                          ;; If loop is a string referencing a runtime var, resolve it
-                          (if (string? loop-val)
-                            (let [resolved (resolve-var-path runtime-vars loop-val)]
-                              (if (vector? resolved) resolved
-                                  (if resolved [resolved] [])))
-                            (if (vector? loop-val) loop-val []))
-                          nil))))]
+            items (let [loop-val (if (:loop interp-raw-task) (:loop interp-raw-task)
+                                  (if (:items interp-raw-task) (:items interp-raw-task)
+                                  (if (:with_items interp-raw-task) (:with_items interp-raw-task)
+                                  (if (:loop mod-args) (:loop mod-args)
+                                  (if (:items mod-args) (:items mod-args)
+                                  (:with_items mod-args))))))]
+                    (if loop-val
+                      ;; If loop is a string referencing a runtime var, resolve it
+                      (if (string? loop-val)
+                        (let [resolved (resolve-var-path runtime-vars loop-val)]
+                          (if (vector? resolved) resolved
+                              (if resolved [resolved] [])))
+                        (if (vector? loop-val) loop-val []))
+                      nil))]
         (if (is-bw)
           (println "TASK [" (:name interp-raw-task) "]")
           (println "\033[36mTASK [" (:name interp-raw-task) "]\033[0m"))
