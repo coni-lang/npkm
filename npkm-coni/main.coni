@@ -787,6 +787,15 @@ v-val v-clean
                 true)))
           true))))
 
+(defn resolve-var-path [vars path]
+  (let [parts (str/split path ".")]
+    (loop [rem parts curr vars]
+      (if (empty? rem)
+        curr
+        (if (map? curr)
+          (recur (rest rem) (get curr (first rem)))
+          nil)))))
+
 (defn get-os-family []
   (let [os (sys-os-name)]
     (if (= os "windows") "Windows" "Unix")))
@@ -895,7 +904,7 @@ v-val v-clean
                         (if loop-val
                           ;; If loop is a string referencing a runtime var, resolve it
                           (if (string? loop-val)
-                            (let [resolved (get runtime-vars loop-val)]
+                            (let [resolved (resolve-var-path runtime-vars loop-val)]
                               (if (vector? resolved) resolved
                                   (if resolved [resolved] [])))
                             (if (vector? loop-val) loop-val []))
