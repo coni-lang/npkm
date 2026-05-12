@@ -3,6 +3,7 @@
 
 (require "libs/os/src/io.coni" :as io)
 (require "libs/str/src/str.coni" :as str)
+(require "main.coni" :as engine)
 
 (def test-dir "tmp/test-replace")
 (io/make-dir test-dir)
@@ -64,34 +65,13 @@
     (io/copy src dest)
     (is (= "nested copy test" (io/read-file dest)))))
 
-;; Helper that simulates what LineInFileTask does
-(defn lineinfile-exec [path pattern line]
-  (if pattern
-    (let [content (if (io/exists? path) (io/read-file path) "")
-          lines (str/split content "\n")
-          result (loop [rem lines
-                        acc []
-                        matched false]
-                   (if (empty? rem)
-                     {:lines acc :matched matched}
-                     (let [cur (first rem)]
-                       (if (sys-regex-match pattern cur)
-                         (recur (rest rem) (conj acc line) true)
-                         (recur (rest rem) (conj acc cur) matched)))))
-          final-lines (if (:matched result)
-                        (:lines result)
-                        (conj (:lines result) line))
-          new-content (str/join "\n" final-lines)]
-      (io/write-file path new-content))
-    (let [existing (if (io/exists? path) (io/read-file path) "")
-          new-content (str existing line "\n")]
-      (io/write-file path new-content))))
+;; Now we test the actual LineInFileTask from the engine
 
 (deftest test-lineinfile-task
   "LineInFileTask tests"
   (let [f (str test-dir "/lineinfile1.txt")]
     (io/write-file f "Hello from NPKM\nHello from NPKM 234\n")
-    (lineinfile-exec f "Hello from NPKM \\d+" "Hello from NPKM 100")
+    (engine/execute (engine/LineInFileTask {:path f :regexp "Hello from NPKM \\d+" :line "Hello from NPKM 100"}))
     (let [result (io/read-file f)]
       (is (= true (str/includes? result "Hello from NPKM 100")))
       (is (= true (str/includes? result "Hello from NPKM\n")))
@@ -99,21 +79,21 @@
 
   (let [f (str test-dir "/lineinfile2.txt")]
     (io/write-file f "value=old123\n")
-    (lineinfile-exec f "value=old\\d+" "value=new456")
+    (engine/execute (engine/LineInFileTask {:path f :regexp "value=old\\d+" :line "value=new456"}))
     (let [result (io/read-file f)]
       (is (= false (str/includes? result "\"")))
       (is (= true (str/includes? result "value=new456")))))
 
   (let [f (str test-dir "/lineinfile3.txt")]
     (io/write-file f "existing line\n")
-    (lineinfile-exec f nil "new appended line")
+    (engine/execute (engine/LineInFileTask {:path f :regexp nil :line "new appended line"}))
     (let [result (io/read-file f)]
       (is (= true (str/includes? result "existing line")))
       (is (= true (str/includes? result "new appended line")))))
 
   (let [f (str test-dir "/lineinfile4.txt")]
     (io/write-file f "alpha\nbeta\ngamma\n")
-    (lineinfile-exec f "delta\\d+" "delta999")
+    (engine/execute (engine/LineInFileTask {:path f :regexp "delta\\d+" :line "delta999"}))
     (let [result (io/read-file f)]
       (is (= true (str/includes? result "delta999")))
       (is (= true (and (str/includes? result "alpha")
@@ -122,7 +102,7 @@
 
   (let [f (str test-dir "/lineinfile5.txt")]
     (io/write-file f "server=host1:8080\nserver=host2:9090\nother=value\n")
-    (lineinfile-exec f "server=.*:\\d+" "server=newhost:3000")
+    (engine/execute (engine/LineInFileTask {:path f :regexp "server=.*:\\d+" :line "server=newhost:3000"}))
     (let [result (io/read-file f)]
       (is (= false (or (str/includes? result "host1") (str/includes? result "host2"))))
       (is (= true (str/includes? result "server=newhost:3000")))

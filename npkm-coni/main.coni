@@ -1234,6 +1234,8 @@ v-val v-clean
                     (execute-playbook tasks inventory cfg is-bw content is-debug))))))))))
 
 )
-(run)
-(dump-logs)
+(if (not (some (fn [x] (= x "test")) (sys-os-args)))
+  (do
+    (run)
+    (dump-logs)))
 
