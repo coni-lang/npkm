@@ -1,5 +1,5 @@
 (require "libs/str/src/str.coni" :as str)
-
+(require "libs/os/src/shell.coni" :as shell)
 (defn walk-interp [node vars]
   (if (map? node)
     (loop [ks (keys node)
@@ -107,3 +107,31 @@
   "Tests extracting target hosts from a playbook"
   (is (= "server1" (extract-hosts "hosts: server1\ntasks:\n  - name: test")))
   (is (= "localhost" (extract-hosts "tasks:\n  - name: test"))))
+
+(defn resolve-var-path [vars path]
+  (let [parts (str/split path ".")]
+    (loop [rem parts curr vars]
+      (if (empty? rem)
+        curr
+        (if (map? curr)
+          (recur (rest rem) (get curr (first rem)))
+          nil)))))
+
+(deftest test-resolve-var-path
+  "Tests the deep property resolution logic used for playbook loop items"
+  (let [runtime-vars {"config" {"services" ["git" "java" "intellij"]}
+                      "flat" "value"}]
+    (is (= ["git" "java" "intellij"] (resolve-var-path runtime-vars "config.services")))
+    (is (= "value" (resolve-var-path runtime-vars "flat")))
+    (is (= nil (resolve-var-path runtime-vars "config.missing")))
+    (is (= nil (resolve-var-path runtime-vars "missing")))))
+
+(deftest test-loop-playbook
+  "Tests the end-to-end execution of a playbook with loop items"
+  (let [res (shell/sh "coni main.coni tests/test-loop.yml")]
+    (is (= 0 (:code res)))
+    (is (= true (str/includes? (:stdout res) "Installing git")))
+    (is (= true (str/includes? (:stdout res) "Installing java")))
+    (is (= true (str/includes? (:stdout res) "Installing intellij")))
+    (is (= true (str/includes? (:stdout res) "Copying index.html")))
+    (is (= true (str/includes? (:stdout res) "Copying app.js")))))

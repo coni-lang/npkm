@@ -1,0 +1,20 @@
+name: Test in Windows
+config:
+  services:
+    - git
+    - java
+    - intellij
+  files:
+    - index.html
+    - app.js
+
+tasks:
+  - name: List of services to install
+    debug:
+      msg: "Installing {{ item }}"
+    loop: config.services
+
+  - name: Copy app files
+    debug:
+      msg: "Copying {{ item }}"
+    loop: config.files
