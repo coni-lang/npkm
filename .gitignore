@@ -6,5 +6,7 @@ npkm
 npkm.exe
 libmlx_c.dylib
 dist
+out
+target
 npkm-coni/npkm-coni
-npkm-coni/npkm-coni.exe
+npkm-coni/npkm-coni.exeManifest.txt

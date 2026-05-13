@@ -23,7 +23,7 @@
           :state "directory"}}
 
   {:name "Build macOS binary"
-   :shell {:cmd "CONI_HOME=/Users/nico/cool/coni-lang PATH=\"$PATH:/usr/local/go/bin:/opt/homebrew/bin\" /tmp/coni-compiler build . -o ../dist/npkm-coni"
+   :shell {:cmd "CONI_HOME=/Users/nico/cool/coni-lang PATH=\"$PATH:/usr/local/go/bin:/opt/homebrew/bin\" CGO_ENABLED=0 /tmp/coni-compiler build . -o ../dist/npkm-coni"
            :cwd "npkm-coni"}}
 
   {:name "Build Windows binary"
@@ -34,9 +34,17 @@
    :shell {:cmd "CONI_HOME=/Users/nico/cool/coni-lang PATH=\"$PATH:/usr/local/go/bin:/opt/homebrew/bin\" CGO_ENABLED=0 GOOS=linux GOARCH=amd64 /tmp/coni-compiler build . -o ../dist/npkm-coni-linux"
            :cwd "npkm-coni"}}
 
-  {:name "Patch macOS RPATHs and copy libmlx.dylib"
-   :shell {:cmd "install_name_tool -delete_rpath /Users/nico/Library/Python/3.9/lib/python/site-packages/mlx/lib dist/npkm-coni 2>/dev/null || true && install_name_tool -delete_rpath /Users/nico/cool/coni-lang/evaluator dist/npkm-coni 2>/dev/null || true && install_name_tool -add_rpath @executable_path/../lib dist/npkm-coni 2>/dev/null || true && install_name_tool -add_rpath @executable_path dist/npkm-coni 2>/dev/null || true && install_name_tool -delete_rpath /Users/nico/Library/Python/3.9/lib/python/site-packages/mlx/lib dist/libmlx_c.dylib 2>/dev/null || true && install_name_tool -add_rpath @loader_path/../lib dist/libmlx_c.dylib 2>/dev/null || true && install_name_tool -add_rpath @loader_path dist/libmlx_c.dylib 2>/dev/null || true && cp /Users/nico/Library/Python/3.9/lib/python/site-packages/mlx/lib/libmlx.dylib dist/ || true"
-           :cwd "."}}
+  {:name "Build nuke macOS binary"
+   :shell {:cmd "CONI_HOME=/Users/nico/cool/coni-lang PATH=\"$PATH:/usr/local/go/bin:/opt/homebrew/bin\" CGO_ENABLED=0 /tmp/coni-compiler build main.coni -o ../dist/nuke-bin"
+           :cwd "nuke"}}
+
+  {:name "Build nuke Windows binary"
+   :shell {:cmd "CONI_HOME=/Users/nico/cool/coni-lang PATH=\"$PATH:/usr/local/go/bin:/opt/homebrew/bin\" CGO_ENABLED=0 GOOS=windows GOARCH=amd64 /tmp/coni-compiler build main.coni -o ../dist/nuke-bin.exe"
+           :cwd "nuke"}}
+
+  {:name "Build nuke Linux binary"
+   :shell {:cmd "CONI_HOME=/Users/nico/cool/coni-lang PATH=\"$PATH:/usr/local/go/bin:/opt/homebrew/bin\" CGO_ENABLED=0 GOOS=linux GOARCH=amd64 /tmp/coni-compiler build main.coni -o ../dist/nuke-bin-linux"
+           :cwd "nuke"}}
 
   {:name "Update local npkm-coni"
    :copy {:src "dist/npkm-coni"
@@ -46,16 +54,27 @@
    :copy {:src "dist/npkm-coni.exe"
           :dest "npkm-coni/npkm-coni.exe"}}
 
+  {:name "Clean example java project"
+   :shell {:cmd "../nuke/nuke clean"
+           :cwd "example-java-project"}}
+
+  {:name "Clean example maven project"
+   :shell {:cmd "../nuke/nuke clean"
+           :cwd "example-maven-project"}}
+
   {:name "Copy release files to dist"
-   :shell {:cmd "cp {{ item }} dist/"}
+   :shell {:cmd "cp -R {{ item }} dist/"}
    :with_items ["README.md"
                 "npkm-coni/test-playbook.edn"
                 "test-playbook.yml"
                 "npkm-coni/tests/test-loop.yml"
-                "npkm-coni/install_ollama.yml"]}
+                "npkm-coni/install_ollama.yml"
+                "nuke"
+                "example-java-project"
+                "example-maven-project"]}
 
   {:name "Package release zip"
-   :shell {:cmd "zip -r npkm-coni-release-{{ build_date }}.zip npkm-coni npkm-coni-linux npkm-coni.exe README.md test-playbook.edn test-playbook.yml test-loop.yml install_ollama.yml libmlx_c.dylib libmlx.dylib"
+   :shell {:cmd "zip -r npkm-coni-release-{{ build_date }}.zip npkm-coni npkm-coni-linux npkm-coni.exe nuke-bin nuke-bin-linux nuke-bin.exe README.md test-playbook.edn test-playbook.yml test-loop.yml install_ollama.yml nuke example-java-project example-maven-project"
            :cwd "dist"}}
 
   {:name "Deploy to samba share"
