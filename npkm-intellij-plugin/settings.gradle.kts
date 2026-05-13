@@ -1,1 +1,1 @@
-rootProject.name = "nuke-intellij-plugin"
+rootProject.name = "npkm-intellij-plugin"
