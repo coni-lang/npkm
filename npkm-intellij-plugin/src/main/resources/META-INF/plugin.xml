@@ -1,0 +1,21 @@
+<idea-plugin>
+    <id>com.hellonico.npkm.plugin</id>
+    <name>NPKM Playbook Engine</name>
+    <vendor email="nico@hellonico.com" url="https://hellonico.com">Hellonico</vendor>
+
+    <description><![CDATA[
+      Provides integration with the NPKM playbook execution engine.<br/>
+      Includes dedicated Run Configurations, YAML task line markers, and active inventory selection.
+    ]]></description>
+
+    <depends>com.intellij.modules.platform</depends>
+    <depends>com.intellij.modules.java</depends>
+    <depends>org.jetbrains.plugins.yaml</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <configurationType implementation="com.hellonico.npkm.plugin.run.NpkmRunConfigurationType"/>
+        <runLineMarkerContributor language="yaml" implementationClass="com.hellonico.npkm.plugin.markers.NpkmLineMarkerProvider"/>
+        <projectService serviceImplementation="com.hellonico.npkm.plugin.settings.NpkmProjectSettings"/>
+        <projectConfigurable parentId="tools" instance="com.hellonico.npkm.plugin.settings.NpkmSettingsConfigurable" id="com.hellonico.npkm.plugin.settings.NpkmSettingsConfigurable" displayName="NPKM"/>
+    </extensions>
+</idea-plugin>

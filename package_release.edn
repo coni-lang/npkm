@@ -34,17 +34,6 @@
    :shell {:cmd "CONI_HOME=/Users/nico/cool/coni-lang PATH=\"$PATH:/usr/local/go/bin:/opt/homebrew/bin\" CGO_ENABLED=0 GOOS=linux GOARCH=amd64 /tmp/coni-compiler build . -o ../dist/npkm-coni-linux"
            :cwd "npkm-coni"}}
 
-  {:name "Build nuke macOS binary"
-   :shell {:cmd "CONI_HOME=/Users/nico/cool/coni-lang PATH=\"$PATH:/usr/local/go/bin:/opt/homebrew/bin\" CGO_ENABLED=0 /tmp/coni-compiler build main.coni -o ../dist/nuke-bin"
-           :cwd "nuke"}}
-
-  {:name "Build nuke Windows binary"
-   :shell {:cmd "CONI_HOME=/Users/nico/cool/coni-lang PATH=\"$PATH:/usr/local/go/bin:/opt/homebrew/bin\" CGO_ENABLED=0 GOOS=windows GOARCH=amd64 /tmp/coni-compiler build main.coni -o ../dist/nuke-bin.exe"
-           :cwd "nuke"}}
-
-  {:name "Build nuke Linux binary"
-   :shell {:cmd "CONI_HOME=/Users/nico/cool/coni-lang PATH=\"$PATH:/usr/local/go/bin:/opt/homebrew/bin\" CGO_ENABLED=0 GOOS=linux GOARCH=amd64 /tmp/coni-compiler build main.coni -o ../dist/nuke-bin-linux"
-           :cwd "nuke"}}
 
   {:name "Update local npkm-coni"
    :copy {:src "dist/npkm-coni"
@@ -54,27 +43,19 @@
    :copy {:src "dist/npkm-coni.exe"
           :dest "npkm-coni/npkm-coni.exe"}}
 
-  {:name "Clean example java project"
-   :shell {:cmd "../nuke/nuke clean"
-           :cwd "example-java-project"}}
-
-  {:name "Clean example maven project"
-   :shell {:cmd "../nuke/nuke clean"
-           :cwd "example-maven-project"}}
 
   {:name "Copy release files to dist"
    :shell {:cmd "cp -R {{ item }} dist/"}
    :with_items ["README.md"
+                "npkm-roadmap.md"
+                "demo.yml"
                 "npkm-coni/test-playbook.edn"
                 "test-playbook.yml"
                 "npkm-coni/tests/test-loop.yml"
-                "npkm-coni/install_ollama.yml"
-                "nuke"
-                "example-java-project"
-                "example-maven-project"]}
+                "npkm-coni/install_ollama.yml"]}
 
   {:name "Package release zip"
-   :shell {:cmd "zip -r npkm-coni-release-{{ build_date }}.zip npkm-coni npkm-coni-linux npkm-coni.exe nuke-bin nuke-bin-linux nuke-bin.exe README.md test-playbook.edn test-playbook.yml test-loop.yml install_ollama.yml nuke example-java-project example-maven-project"
+   :shell {:cmd "zip -r npkm-coni-release-{{ build_date }}.zip npkm-coni npkm-coni-linux npkm-coni.exe README.md npkm-roadmap.md demo.yml test-playbook.edn test-playbook.yml test-loop.yml install_ollama.yml"
            :cwd "dist"}}
 
   {:name "Deploy to samba share"

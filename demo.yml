@@ -1,0 +1,145 @@
+# ============================================================
+#  NPKM Demo Playbook - Feature Showcase
+#  Run:      npkm demo.yml
+#  Dry-run:  npkm --dry-run demo.yml
+#  Docs:     npkm --doc demo.yml
+# ============================================================
+
+config:
+  app_name: "my-app"
+  version: "1.0.0"
+  deploy_dir: "tmp/npkm-demo"
+  environments:
+    - staging
+    - production
+  services:
+    - nginx
+    - redis
+    - postgres
+
+tasks:
+
+  # ── 1. Setup ─────────────────────────────────────────────
+  - name: "Welcome banner"
+    debug:
+      msg: "NPKM Demo - deploying my-app v1.0.0"
+
+  - name: "Create deploy directory"
+    file:
+      path: "tmp/npkm-demo"
+      state: directory
+
+  - name: "Create subdirectories"
+    file:
+      path: "{{ item }}"
+      state: directory
+    loop:
+      - "tmp/npkm-demo/logs"
+      - "tmp/npkm-demo/config"
+      - "tmp/npkm-demo/releases"
+
+  # ── 2. Loops ─────────────────────────────────────────────
+  - name: "Announce target environments"
+    debug:
+      msg: "Would deploy to environment"
+    loop: config.environments
+
+  - name: "Announce managed services"
+    debug:
+      msg: "Would manage service"
+    loop: config.services
+
+  # ── 3. Conditionals ──────────────────────────────────────
+  - name: "Unix - record platform"
+    shell:
+      cmd: "echo 'platform: unix' > tmp/npkm-demo/logs/platform.log"
+    when: "ansible_os_family == Unix"
+
+  - name: "Windows - record platform"
+    debug:
+      msg: "Running on Windows"
+    when: "ansible_os_family == Windows"
+
+  # ── 4. Shell + register ──────────────────────────────────
+  - name: "Get current timestamp"
+    shell:
+      cmd: "date '+%Y-%m-%d %H:%M:%S'"
+    register: build_timestamp
+
+  - name: "Print timestamp"
+    debug:
+      msg: "Build timestamp captured"
+
+  # ── 5. File manipulation ─────────────────────────────────
+  - name: "Write initial release notes"
+    shell:
+      cmd: "echo 'my-app v1.0.0 release notes' > tmp/npkm-demo/releases/RELEASE.txt"
+
+  - name: "Append system info"
+    shell:
+      cmd: "uname -a >> tmp/npkm-demo/releases/RELEASE.txt"
+    when: "ansible_os_family == Unix"
+
+  - name: "Ensure version line is present in RELEASE.txt"
+    lineinfile:
+      path: "tmp/npkm-demo/releases/RELEASE.txt"
+      line: "version=1.0.0"
+
+  - name: "Replace draft marker with STABLE"
+    replace:
+      path: "tmp/npkm-demo/releases/RELEASE.txt"
+      regexp: "release notes"
+      replace: "STABLE RELEASE"
+
+  # ── 6. Parallel task group ───────────────────────────────
+  - parallel: true
+    tasks:
+      - name: "Parallel worker A"
+        shell:
+          cmd: "echo 'worker-A done' >> tmp/npkm-demo/logs/parallel.log"
+      - name: "Parallel worker B"
+        shell:
+          cmd: "echo 'worker-B done' >> tmp/npkm-demo/logs/parallel.log"
+      - name: "Parallel worker C"
+        shell:
+          cmd: "echo 'worker-C done' >> tmp/npkm-demo/logs/parallel.log"
+
+  - name: "Read parallel log"
+    shell:
+      cmd: "sort tmp/npkm-demo/logs/parallel.log"
+    register: parallel_log
+
+  - name: "Print parallel results"
+    debug:
+      msg: "All parallel workers completed"
+
+  # ── 7. HTTP download ─────────────────────────────────────
+  - name: "Download remote resource"
+    get_url:
+      url: "https://httpbin.org/get"
+      dest: "tmp/npkm-demo/hello.json"
+
+  - name: "Check download size"
+    shell:
+      cmd: "wc -c tmp/npkm-demo/hello.json"
+    register: file_size
+
+  - name: "Print download size"
+    debug:
+      msg: "Download complete - check tmp/npkm-demo/hello.json"
+
+  # ── 8. Archive ───────────────────────────────────────────
+  - name: "Zip the release folder"
+    archive:
+      src: "tmp/npkm-demo"
+      dest: "tmp/npkm-demo-1.0.0.zip"
+
+  # ── 9. Cleanup ───────────────────────────────────────────
+  - name: "Remove working directory"
+    remove:
+      path: "tmp/npkm-demo"
+
+  # ── 10. Summary ──────────────────────────────────────────
+  - name: "Done"
+    debug:
+      msg: "Demo complete. Find the archive at tmp/npkm-demo-1.0.0.zip"

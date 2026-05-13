@@ -81,9 +81,11 @@
         (if (empty? rem) acc
             (recur (rest rem) (conj acc (walk-interp (first rem) vars)))))
       (if (string? node)
-        (let [k-list (keys vars)]
+        (let [;; Restore curly braces encoded by yaml edn-escape
+              node-dec (str/replace (str/replace node "~LCURL~" "{") "~RCURL~" "}")
+              k-list (keys vars)]
           (loop [rem k-list
-                 curr node]
+                 curr node-dec]
              (if (empty? rem) curr
                  (let [k (first rem)
                        v (get vars k)
@@ -1124,12 +1126,19 @@ v-val v-clean
 (defn run []
   (let [args (cli/args)
         flags (filter (fn [x] (str/starts-with? x "-")) args)
-        pos-args (filter (fn [x] (not (str/starts-with? x "-"))) args)
         is-bw (some (fn [x] (= x "-bw")) flags)
         is-debug (some (fn [x] (or (= x "--verbose") (= x "--debug"))) flags)
         is-dry-run (some (fn [x] (or (= x "--dry-run") (= x "--check"))) flags)
         inv-file (loop [i 0] (if (>= i (count args)) nil (if (= (nth args i) "-i") (nth args (+ i 1)) (recur (+ i 1)))))
-        inventory (if inv-file (parse-inventory inv-file) nil)]
+        inventory (if inv-file (parse-inventory inv-file) nil)
+        lbl-idx (loop [i 0] (if (>= i (count args)) -1 (if (= (nth args i) "--labels") i (recur (+ i 1)))))
+        labels-val (if (>= lbl-idx 0) (nth args (+ lbl-idx 1)) nil)
+        names-idx (loop [i 0] (if (>= i (count args)) -1 (if (= (nth args i) "--names") i (recur (+ i 1)))))
+        names-val (if (>= names-idx 0) (nth args (+ names-idx 1)) nil)
+        pos-args (filter (fn [x] (and (not (str/starts-with? x "-")) 
+                                      (not (= x inv-file)) 
+                                      (not (= x labels-val)) 
+                                      (not (= x names-val)))) args)]
     (if (some (fn [x] (or (= x "-v") (= x "-V") (= x "--version"))) flags)
       (do
         (let [exe-path ((sys-os-args) 0)
@@ -1206,12 +1215,8 @@ v-val v-clean
           playbook-file (first pos-args-clean)
           is-git? (if playbook-file (or (str/ends-with? playbook-file ".git") (str/starts-with? playbook-file "git://") (str/starts-with? playbook-file "git@") (str/starts-with? playbook-file "ssh://git@")) false)
           is-doc? (some (fn [x] (= x "--doc")) flags)
-          lbl-idx (loop [i 0] (if (>= i (count args)) -1 (if (= (nth args i) "--labels") i (recur (+ i 1)))))
-          labels-val (if (>= lbl-idx 0) (nth args (+ lbl-idx 1)) nil)
           labels-list (if labels-val (str/split labels-val ",") [])
           _ (if (> (count labels-list) 0) (reset! target-labels labels-list))
-          names-idx (loop [i 0] (if (>= i (count args)) -1 (if (= (nth args i) "--names") i (recur (+ i 1)))))
-          names-val (if (>= names-idx 0) (nth args (+ names-idx 1)) nil)
           names-list (if names-val (str/split names-val ",") [])
           _ (if (> (count names-list) 0) (reset! target-names names-list))]
       (if is-doc?

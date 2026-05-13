@@ -10,3 +10,7 @@ out
 target
 npkm-coni/npkm-coni
 npkm-coni/npkm-coni.exeManifest.txt
+.gradle
+bin
+build
+.idea
