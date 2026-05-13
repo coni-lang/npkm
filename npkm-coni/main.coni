@@ -1032,6 +1032,49 @@ v-val v-clean
               new-acc (str acc play-def (:acc res))]
           (recur (rest rem-plays) (+ p-idx 1) new-acc))))))
 
+(defn run-host [host play base-vars tasks inventory is-bw]
+  (let [host-vars (if (and inventory (> (count inventory) 0) (not= host "localhost")) (get-host-vars inventory host) {})
+        conn-cfg (if (and (not= host "localhost") (not= host ""))
+                   {:host (if (:ansible_host host-vars) (:ansible_host host-vars) host)
+                    :user (if (:ansible_user host-vars) (:ansible_user host-vars) nil)
+                    :key (if (:ansible_ssh_private_key_file host-vars) (:ansible_ssh_private_key_file host-vars) nil)
+                    :password (if (:ansible_ssh_pass host-vars) (:ansible_ssh_pass host-vars) nil)
+                    :port (if (:ansible_port host-vars) (:ansible_port host-vars) 22)}
+                   nil)
+        runtime-vars (merge base-vars host-vars)
+        os-family (if (:ansible_os_family runtime-vars) (:ansible_os_family runtime-vars) (if (= host "localhost") (get-os-family) "Unix"))
+        runtime-vars (assoc runtime-vars :ansible_os_family os-family :inventory_hostname host)
+        runtime-vars (if conn-cfg (assoc runtime-vars :__connection__ conn-cfg) runtime-vars)]
+    (if is-bw
+      (println "\nPLAY [" (:name play) "]\nHOST [" host "]")
+      (println "\n\033[36mPLAY [" (:name play) "]\033[0m\n\033[35mHOST [" host "]\033[0m"))
+    (loop [rem-tasks tasks
+           curr-vars runtime-vars]
+      (if (empty? rem-tasks)
+        nil
+        (let [t (first rem-tasks)
+              is-parallel-group (or (:parallel t) (get t "parallel"))]
+          (if is-parallel-group
+            ;; Parallel task group: fan-out via spawn+channels
+            (let [parallel-tasks (if (:tasks t) (:tasks t) (get t "tasks" []))
+                  result-ch (chan (count parallel-tasks))]
+              (doseq [pt parallel-tasks]
+                (spawn (fn []
+                  (run-task pt curr-vars)
+                  (>! result-ch :done))))
+              ;; fan-in: drain all results
+              (loop [n (count parallel-tasks)]
+                (if (> n 0)
+                  (do (<! result-ch) (recur (- n 1)))
+                  nil))
+              (if is-bw
+                (println "  [parallel group complete]\n")
+                (println "\033[36m  [parallel group complete]\033[0m\n"))
+              (recur (rest rem-tasks) curr-vars))
+            ;; Normal sequential task
+            (let [new-vars (run-task t curr-vars)]
+              (recur (rest rem-tasks) new-vars))))))))
+
 (defn execute-playbook [parsed-content inventory global-vars is-bw yaml-content is-debug is-dry-run]
   (let [plays (if (and (vector? parsed-content) (map? (first parsed-content)) (:tasks (first parsed-content)))
                 parsed-content
@@ -1046,35 +1089,36 @@ v-val v-clean
         (let [play (first rem-plays)
               target-group (if (:hosts play) (:hosts play) "localhost")
               p-vars (if (:vars play) (:vars play) {})
+              forks (if (:forks play) (:forks play) (if (get play "forks") (get play "forks") 1))
               base-vars (merge play-vars p-vars {:__debug__ is-debug :__dry_run__ is-dry-run})
               tasks (:tasks play)
               target-hosts (if (and inventory (> (count (keys inventory)) 0)) (get-hosts inventory target-group) (if (= target-group "localhost") ["localhost"] [target-group]))]
-          (loop [rem-hosts target-hosts]
-            (if (empty? rem-hosts)
-              nil
-              (let [host (first rem-hosts)
-                    host-vars (if (and inventory (> (count inventory) 0) (not= host "localhost")) (get-host-vars inventory host) {})
-                    conn-cfg (if (and (not= host "localhost") (not= host ""))
-                               {:host (if (:ansible_host host-vars) (:ansible_host host-vars) host)
-                                :user (if (:ansible_user host-vars) (:ansible_user host-vars) nil)
-                                :key (if (:ansible_ssh_private_key_file host-vars) (:ansible_ssh_private_key_file host-vars) nil)
-                                :password (if (:ansible_ssh_pass host-vars) (:ansible_ssh_pass host-vars) nil)
-                                :port (if (:ansible_port host-vars) (:ansible_port host-vars) 22)}
-                               nil)
-                    runtime-vars (merge base-vars host-vars)
-                    os-family (if (:ansible_os_family runtime-vars) (:ansible_os_family runtime-vars) (if (= host "localhost") (get-os-family) "Unix"))
-                    runtime-vars (assoc runtime-vars :ansible_os_family os-family :inventory_hostname host)
-                    runtime-vars (if conn-cfg (assoc runtime-vars :__connection__ conn-cfg) runtime-vars)]
-                (if is-bw
-                  (println "\nPLAY [" (:name play) "]\nHOST [" host "]")
-                  (println "\n\033[36mPLAY [" (:name play) "]\033[0m\n\033[35mHOST [" host "]\033[0m"))
-                (loop [rem-tasks tasks
-                       curr-vars runtime-vars]
-                  (if (empty? rem-tasks)
-                    nil
-                    (let [new-vars (run-task (first rem-tasks) curr-vars)]
-                      (recur (rest rem-tasks) new-vars))))
-                (recur (rest rem-hosts)))))
+          (if (and (> forks 1) (> (count target-hosts) 1))
+            ;; Parallel host execution: spawn one goroutine per host, fan-in on done-ch
+            (let [done-ch (chan (count target-hosts))]
+              (if is-bw
+                (println (str "[forks=" forks "] Running " (count target-hosts) " hosts in parallel..."))
+                (println (str "\033[33m[forks=" forks "] Running " (count target-hosts) " hosts in parallel...\033[0m")))
+              (doseq [host target-hosts]
+                (spawn (fn []
+                  (run-host host play base-vars tasks inventory is-bw)
+                  (>! done-ch host))))
+              ;; Wait for all hosts to complete
+              (loop [n (count target-hosts)]
+                (if (> n 0)
+                  (let [finished (<! done-ch)]
+                    (if is-bw
+                      (println (str "  host " finished " done"))
+                      (println (str "\033[32m  host " finished " done\033[0m")))
+                    (recur (- n 1)))
+                  nil)))
+            ;; Sequential execution (default)
+            (loop [rem-hosts target-hosts]
+              (if (empty? rem-hosts)
+                nil
+                (do
+                  (run-host (first rem-hosts) play base-vars tasks inventory is-bw)
+                  (recur (rest rem-hosts))))))
           (recur (rest rem-plays) play-vars))))))
 
 (defn run []
