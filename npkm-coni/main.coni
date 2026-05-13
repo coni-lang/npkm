@@ -813,15 +813,21 @@ v-val v-clean
             v-with-become (if (and (map? v-with-debug) raw-become) (assoc v-with-debug :__become__ true) v-with-debug)
             v-with-vars (if (map? v-with-become) (assoc v-with-become :__vars__ runtime-vars) v-with-become)
             constructor (get playbook-task-registry k)
-            out-str (execute (constructor v-with-vars))
+            out-str (if (:__dry_run__ runtime-vars)
+                      "  skipping module execution (dry-run)"
+                      (execute (constructor v-with-vars)))
             reg-key (if (:register interp-raw-task) (:register interp-raw-task) (if (and (map? v) (:register v)) (:register v) nil))]
         (do
           (if (and (:__debug__ runtime-vars) out-str (not (= (str/trim (str out-str)) "")))
             (println (str/trim (str out-str)))
             nil)
           (if (is-bw)
-            (println "  changed\n")
-            (println "\033[32m  changed\033[0m\n"))
+            (if (:__dry_run__ runtime-vars)
+              (println "  ok (dry-run)\n")
+              (println "  changed\n"))
+            (if (:__dry_run__ runtime-vars)
+              (println "\033[32m  ok (dry-run)\033[0m\n")
+              (println "\033[32m  changed\033[0m\n")))
           {:vars (if reg-key
                    (assoc runtime-vars reg-key (str/trim (if out-str (str out-str) "")))
                    runtime-vars)
@@ -1026,7 +1032,7 @@ v-val v-clean
               new-acc (str acc play-def (:acc res))]
           (recur (rest rem-plays) (+ p-idx 1) new-acc))))))
 
-(defn execute-playbook [parsed-content inventory global-vars is-bw yaml-content is-debug]
+(defn execute-playbook [parsed-content inventory global-vars is-bw yaml-content is-debug is-dry-run]
   (let [plays (if (and (vector? parsed-content) (map? (first parsed-content)) (:tasks (first parsed-content)))
                 parsed-content
                 (let [play-hosts (if yaml-content (extract-hosts yaml-content) (if (map? parsed-content) (:hosts parsed-content "localhost") "localhost"))]
@@ -1040,7 +1046,7 @@ v-val v-clean
         (let [play (first rem-plays)
               target-group (if (:hosts play) (:hosts play) "localhost")
               p-vars (if (:vars play) (:vars play) {})
-              base-vars (merge play-vars p-vars {:__debug__ is-debug})
+              base-vars (merge play-vars p-vars {:__debug__ is-debug :__dry_run__ is-dry-run})
               tasks (:tasks play)
               target-hosts (if (and inventory (> (count (keys inventory)) 0)) (get-hosts inventory target-group) (if (= target-group "localhost") ["localhost"] [target-group]))]
           (loop [rem-hosts target-hosts]
@@ -1077,6 +1083,7 @@ v-val v-clean
         pos-args (filter (fn [x] (not (str/starts-with? x "-"))) args)
         is-bw (some (fn [x] (= x "-bw")) flags)
         is-debug (some (fn [x] (or (= x "--verbose") (= x "--debug"))) flags)
+        is-dry-run (some (fn [x] (or (= x "--dry-run") (= x "--check"))) flags)
         inv-file (loop [i 0] (if (>= i (count args)) nil (if (= (nth args i) "-i") (nth args (+ i 1)) (recur (+ i 1)))))
         inventory (if inv-file (parse-inventory inv-file) nil)]
     (if (some (fn [x] (or (= x "-v") (= x "-V") (= x "--version"))) flags)
@@ -1094,6 +1101,7 @@ v-val v-clean
         (println "  -v    prints version (compiled at date)")
         (println "  -h    shows help and supported tasks")
         (println "  --doc generates markdown and mermaid documentation for playbook and inventory")
+        (println "  --dry-run, --check    simulate execution without making changes")
         (println "  --labels   comma-separated labels to execute")
         (println "  --names    comma-separated task names to execute")
         (println "  -bw   disable color output")
@@ -1210,7 +1218,7 @@ v-val v-clean
                       cfg (:cfg parsed-data)]
                   (do
                     (shell/sh (str "cd " tmp-dir))
-                    (execute-playbook tasks inventory cfg is-bw content is-debug)))
+                    (execute-playbook tasks inventory cfg is-bw content is-debug is-dry-run)))
                 (do (if is-bw (println "Error cloning git repo:" (:stderr res)) (println "\033[31mError cloning git repo:" (:stderr res) "\033[0m")) (sys-exit 1)))))
           (if (str/includes? playbook-file "http")
             (let [dest (if (or (str/ends-with? playbook-file ".yml") (str/ends-with? playbook-file ".yaml")) "tmp/remote-playbook.yml" "tmp/remote-playbook.edn")
@@ -1221,7 +1229,7 @@ v-val v-clean
                       parsed-data (parse-playbook dest content)
                       tasks (:tasks parsed-data)
                       cfg (:cfg parsed-data)]
-                  (execute-playbook tasks inventory cfg is-bw content is-debug))
+                  (execute-playbook tasks inventory cfg is-bw content is-debug is-dry-run))
                 (do (if is-bw (println "Failed to download playbook") (println "\033[31mFailed to download playbook\033[0m")) (sys-exit 1))))
             (if (not (io/exists? playbook-file))
               (do
@@ -1231,7 +1239,7 @@ v-val v-clean
                         parsed-data (parse-playbook playbook-file content)
                         tasks (:tasks parsed-data)
                         cfg (:cfg parsed-data)]
-                    (execute-playbook tasks inventory cfg is-bw content is-debug))))))))))
+                    (execute-playbook tasks inventory cfg is-bw content is-debug is-dry-run))))))))))
 
 )
 (if (not (some (fn [x] (= x "test")) (sys-os-args)))
