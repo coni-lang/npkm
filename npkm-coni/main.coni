@@ -37,10 +37,16 @@
     (swap! global-log-acc str (strip-colors msg))))
 
 (defn dump-logs []
-  (let [log-dir (str (os/get-home-dir) "/.npkm")
+  (let [npkm-dir (str (os/get-home-dir) "/.npkm")
+        log-dir (str npkm-dir "/logs")
         date-str (os/get-date)
-        log-path (str log-dir "/" date-str ".log")]
+        log-path (str log-dir "/" date-str ".log")
+        is-win (= (sys-os-name) "windows")]
+    (io/make-dir npkm-dir)
     (io/make-dir log-dir)
+    (if is-win
+      (shell/sh (str "move \"" npkm-dir "\\*.log\" \"" log-dir "\\\" 2>nul"))
+      (shell/sh (str "mv " npkm-dir "/*.log " log-dir "/ 2>/dev/null")))
     (io/write-file log-path @global-log-acc)))
 
 (defn sys-exit [code]
