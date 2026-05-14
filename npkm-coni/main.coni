@@ -845,7 +845,20 @@ v-val v-clean
                                   (catch e
                                     {:ok false :err e}))]
                         (if (:ok res)
-                          (:val res)
+                          (let [until-expr (if (contains? interp-raw-task :until) (:until interp-raw-task) (if (and (map? v) (contains? v :until)) (:until v) nil))
+                                condition-met (if (nil? until-expr) true
+                                                (if (or (= until-expr true) (= until-expr false)) until-expr
+                                                  (if (string? until-expr) (eval-when until-expr (assoc runtime-vars :result (str/trim (if (:val res) (str (:val res)) "")))) true)))]
+                            (if condition-met
+                              (:val res)
+                              (if (< attempt retries)
+                                (do
+                                  (if (is-bw)
+                                    (println "  [retry] Condition not met. Retrying in" delay-sec "seconds...")
+                                    (println "\033[33m  [retry] Condition not met. Retrying in" delay-sec "seconds...\033[0m"))
+                                  (sleep delay-ms)
+                                  (recur (+ attempt 1)))
+                                (throw (str "Failed to meet until condition after " retries " retries")))))
                           (if (< attempt retries)
                             (do
                               (if (is-bw)
