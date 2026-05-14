@@ -61,10 +61,17 @@ tasks:
     when: "ansible_os_family == Windows"
 
   # ── 4. Shell + register ──────────────────────────────────
-  - name: "Get current timestamp"
+  - name: "Unix - Get current timestamp"
     shell:
       cmd: "date '+%Y-%m-%d %H:%M:%S'"
     register: build_timestamp
+    when: "ansible_os_family == Unix"
+
+  - name: "Windows - Get current timestamp"
+    shell:
+      cmd: "powershell -Command \"Get-Date -Format 'yyyy-MM-dd HH:mm:ss'\""
+    register: build_timestamp
+    when: "ansible_os_family == Windows"
 
   - name: "Print timestamp"
     debug:
