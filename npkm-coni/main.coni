@@ -15,6 +15,7 @@
 
 (def target-labels (atom []))
 (def target-names (atom []))
+(def global-step-mode (atom false))
 
 ;; --- Global Execution Stats (for --report) ---
 (def stats-ok (atom 0))
@@ -1388,7 +1389,7 @@ v-val v-clean
                     (recur (rest rem-handlers))))))
             nil))
         nil))))
-(defn execute-playbook [parsed-content inventory global-vars is-bw yaml-content is-debug is-dry-run is-diff is-step]
+(defn execute-playbook [parsed-content inventory global-vars is-bw yaml-content is-debug is-dry-run is-diff]
   (let [plays (if (and (vector? parsed-content) (map? (first parsed-content)) (:tasks (first parsed-content)))
                 parsed-content
                 (let [play-hosts (if yaml-content (extract-hosts yaml-content) (if (map? parsed-content) (:hosts parsed-content "localhost") "localhost"))]
@@ -1403,7 +1404,7 @@ v-val v-clean
               target-group (if (:hosts play) (:hosts play) "localhost")
               p-vars (if (:vars play) (:vars play) {})
               forks (if (:forks play) (:forks play) (if (get play "forks") (get play "forks") 1))
-              base-vars (merge play-vars p-vars {:__debug__ is-debug :__dry_run__ is-dry-run :__diff__ is-diff :__step__ is-step})
+              base-vars (merge play-vars p-vars {:__debug__ is-debug :__dry_run__ is-dry-run :__diff__ is-diff :__step__ @global-step-mode})
               tasks (:tasks play)
               target-hosts (if (and inventory (> (count (keys inventory)) 0)) (get-hosts inventory target-group) (if (= target-group "localhost") ["localhost"] [target-group]))]
           (if (and (> forks 1) (> (count target-hosts) 1))
@@ -1681,6 +1682,7 @@ v-val v-clean
         is-report (some (fn [x] (= x "--report")) flags)
         is-step (some (fn [x] (= x "--step")) flags)
         _ (reset! stats-start-ms (int (str/trim (:stdout (shell/sh "date +%s%3N")))))
+         _ (if is-step (reset! global-step-mode true))
         inv-file (loop [i 0] (if (>= i (count args)) nil (if (= (nth args i) "-i") (nth args (+ i 1)) (recur (+ i 1)))))
         inventory (if inv-file (parse-inventory inv-file) nil)
         lbl-idx (loop [i 0] (if (>= i (count args)) -1 (if (= (nth args i) "--labels") i (recur (+ i 1)))))
@@ -1887,7 +1889,7 @@ v-val v-clean
                       parsed-data (parse-playbook dest content)
                       tasks (:tasks parsed-data)
                       cfg (:cfg parsed-data)]
-                  (execute-playbook tasks inventory cfg is-bw content is-debug is-dry-run is-diff false))
+                  (execute-playbook tasks inventory cfg is-bw content is-debug is-dry-run is-diff))
                 (do (if is-bw (println "Failed to download playbook") (println "\033[31mFailed to download playbook\033[0m")) (sys-exit 1))))
             (if (not (io/exists? playbook-file))
               (do
@@ -1897,7 +1899,7 @@ v-val v-clean
                         parsed-data (parse-playbook playbook-file content)
                         tasks (:tasks parsed-data)
                         cfg (:cfg parsed-data)]
-                    (execute-playbook tasks inventory cfg is-bw content is-debug is-dry-run is-diff is-step)
+                    (execute-playbook tasks inventory cfg is-bw content is-debug is-dry-run is-diff)
                     (if is-report (generate-report playbook-file))))))))))))
 
 )
