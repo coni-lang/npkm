@@ -583,8 +583,13 @@
 
 ;; yaml-to-edn is provided by libs/yaml/src/yaml.coni (yaml/yaml-to-edn)
 
-(defn parse-playbook [file content]
-  (let [is-yaml (or (str/ends-with? file ".yml") (str/ends-with? file ".yaml"))
+(defn parse-playbook [file raw-content]
+  (let [content (if (str/starts-with? raw-content "$NPKM_VAULT;1.0;AES256") 
+                  (let [tmp (str "/tmp/npkm_vault_read_" (str/trim (:stdout (shell/sh "date +%s%N"))))]
+                    (io/write-file tmp raw-content)
+                    (read-vault-file tmp)) 
+                  raw-content)
+        is-yaml (or (str/ends-with? file ".yml") (str/ends-with? file ".yaml"))
         local-cfg (if is-yaml 
                     (yaml/extract-config content)
                     (let [parsed (read-string content)
@@ -706,12 +711,21 @@ v-val v-clean
 
 (defn parse-inventory [path]
   (if (io/exists? path)
-    (let [content (io/read-file path)
-          is-yaml (or (str/ends-with? path ".yml") (str/ends-with? path ".yaml"))
-          data (if is-yaml
-                 (parse-inventory-yaml content)
-                 (read-string content))]
-      data)
+    (let [is-exec (= (str/trim (:stdout (shell/sh (str "[ -x " path " ] && echo true || echo false")))) "true")]
+      (if is-exec
+        (let [exec-res (shell/sh (if (str/starts-with? path "/") path (str "./" path)))]
+          (if (= (:code exec-res) 0)
+             (let [content (:stdout exec-res)]
+               (if (str/starts-with? (str/trim content) "{")
+                 (read-string content)
+                 (parse-inventory-yaml content)))
+             (throw (str "Dynamic inventory execution failed: " (:stderr exec-res)))))
+        (let [content (read-vault-file path)
+              is-yaml (or (str/ends-with? path ".yml") (str/ends-with? path ".yaml"))
+              data (if is-yaml
+                     (parse-inventory-yaml content)
+                     (read-string content))]
+          data)))
     (if (str/includes? path ",")
       (let [hosts (str/split path ",")
             host-map (loop [rem hosts acc {}]
@@ -726,14 +740,18 @@ v-val v-clean
 (defn get-hosts [inventory target-group]
   (if (= target-group "localhost")
     ["localhost"]
-    (let [group (get inventory target-group)]
+    (let [group (if (get inventory target-group) (get inventory target-group) (get inventory (keyword target-group)))]
       (if group
-        (if (:hosts group)
-          (keys (:hosts group))
-          (if (map? group) (keys group) group))
-        (let [all-group (get inventory "all")]
-          (if (and all-group (:hosts all-group) (get (:hosts all-group) target-group))
-            [target-group]
+        (let [hosts-map (if (:hosts group) (:hosts group) (get group "hosts"))]
+          (if hosts-map
+            (keys hosts-map)
+            (if (map? group) (keys group) group)))
+        (let [all-group (if (get inventory "all") (get inventory "all") (get inventory :all))]
+          (if all-group
+            (let [all-hosts-map (if (:hosts all-group) (:hosts all-group) (get all-group "hosts"))]
+              (if (and all-hosts-map (or (get all-hosts-map target-group) (get all-hosts-map (keyword target-group))))
+                [target-group]
+                []))
             []))))))
 
 (defn get-host-vars [inventory host-name]
@@ -743,8 +761,12 @@ v-val v-clean
       (if (empty? rem)
         acc
         (let [g (first rem)
-              hosts (if (and (get inventory g) (:hosts (get inventory g))) (:hosts (get inventory g)) {})
-              host-data (if (get hosts host-name) (get hosts host-name) {})]
+              group-val (get inventory g)
+              hosts (if group-val
+                      (if (:hosts group-val) (:hosts group-val)
+                        (if (get group-val "hosts") (get group-val "hosts") {}))
+                      {})
+              host-data (if (get hosts host-name) (get hosts host-name) (if (get hosts (keyword host-name)) (get hosts (keyword host-name)) {}))]
           (recur (rest rem) (merge acc host-data)))))))
 
 (defn extract-hosts [content]
@@ -788,9 +810,27 @@ v-val v-clean
       (str home (subs path 1)))
     path))
 
+(defn read-vault-file [path]
+  (let [content (io/read-file path)]
+    (if (str/starts-with? content "$NPKM_VAULT;1.0;AES256")
+      (let [args (cli/args)
+            pass (let [o (str/trim (:stdout (shell/sh "echo $NPKM_VAULT_PASSWORD")))] (if (> (count o) 0) o nil))
+            pass-file (loop [i 0] (if (>= i (count args)) nil (if (= (nth args i) "--vault-pass-file") (nth args (+ i 1)) (recur (+ i 1)))))
+            real-pass (if pass pass (if (and pass-file (io/exists? pass-file)) (str/trim (io/read-file pass-file)) nil))]
+        (if (not real-pass)
+          (throw (str "File " path " is vault-encrypted, but no NPKM_VAULT_PASSWORD or --vault-pass-file provided!")))
+        (let [payload (str/trim (subs content 22 (count content)))
+              tmp (str "/tmp/npkm_vault_read_" (str/trim (:stdout (shell/sh "date +%s%N"))))]
+          (io/write-file tmp payload)
+          (let [res (shell/sh (str "cat " tmp " | openssl enc -d -aes-256-cbc -a -salt -pbkdf2 -pass pass:" real-pass))]
+            (if (= (:code res) 0)
+              (:stdout res)
+              (throw (str "Failed to decrypt vault file " path ": " (:stderr res)))))))
+      content)))
+
 (defn read-parsed-file [path default-val]
   (if (io/exists? path)
-    (let [content (io/read-file path)]
+    (let [content (read-vault-file path)]
       (if (str/ends-with? path ".edn")
         (read-string content)
         (read-string (yaml/yaml-to-edn content))))
@@ -1429,6 +1469,46 @@ v-val v-clean
                            (println "Failed to checkout version:" (:stderr checkout-res))))
                        (println (str "Role installed successfully into " dest-dir))))
                    (println "Failed to install role:" (:stderr res))))))
+          (sys-exit 0)))
+      (if (and (= (first pos-args-clean) "vault"))
+        (do
+          (let [action (second pos-args-clean)
+                target-file (if (> (count pos-args-clean) 2) (nth pos-args-clean 2) nil)]
+            (if (or (not action) (not target-file))
+              (do (println "Usage: npkm vault <encrypt|decrypt> <file>") (sys-exit 1)))
+            (let [pass (let [o (str/trim (:stdout (shell/sh "echo $NPKM_VAULT_PASSWORD")))] (if (> (count o) 0) o nil))
+                  pass-file (loop [i 0] (if (>= i (count args)) nil (if (= (nth args i) "--vault-pass-file") (nth args (+ i 1)) (recur (+ i 1)))))
+                  real-pass (if pass pass (if (and pass-file (io/exists? pass-file)) (str/trim (io/read-file pass-file)) nil))]
+              (if (not real-pass)
+                (do (println "Error: NPKM_VAULT_PASSWORD environment variable or --vault-pass-file is required for vault operations.") (sys-exit 1)))
+              (if (= action "encrypt")
+                (let [content (io/read-file target-file)
+                      _ (if (str/starts-with? content "$NPKM_VAULT;1.0;AES256") (do (println "File is already encrypted.") (sys-exit 0)))]
+                  (println "Encrypting" target-file "...")
+                  (let [tmp (str "/tmp/npkm_vault_" (str/trim (:stdout (shell/sh "date +%s%N"))))]
+                    (io/write-file tmp content)
+                    (let [res (shell/sh (str "cat " tmp " | openssl enc -aes-256-cbc -a -salt -pbkdf2 -pass pass:" real-pass))]
+                      (if (= (:code res) 0)
+                        (do
+                           (io/write-file target-file (str "$NPKM_VAULT;1.0;AES256
+" (:stdout res)))
+                           (println "Encryption successful."))
+                        (println "Encryption failed:" (:stderr res))))))
+                (if (= action "decrypt")
+                  (let [content (io/read-file target-file)]
+                    (if (not (str/starts-with? content "$NPKM_VAULT;1.0;AES256"))
+                      (do (println "File is not encrypted with NPKM_VAULT.") (sys-exit 0)))
+                    (println "Decrypting" target-file "...")
+                    (let [payload (str/trim (subs content 22 (count content)))
+                          tmp (str "/tmp/npkm_vault_" (str/trim (:stdout (shell/sh "date +%s%N"))))]
+                      (io/write-file tmp payload)
+                      (let [res (shell/sh (str "cat " tmp " | openssl enc -d -aes-256-cbc -a -salt -pbkdf2 -pass pass:" real-pass))]
+                        (if (= (:code res) 0)
+                          (do
+                             (io/write-file target-file (:stdout res))
+                             (println "Decryption successful."))
+                          (println "Decryption failed:" (:stderr res))))))
+                  (println "Unknown vault action:" action)))))
           (sys-exit 0)))
       (let [playbook-file (first pos-args-clean)
           is-git? (if playbook-file (or (str/ends-with? playbook-file ".git") (str/starts-with? playbook-file "git://") (str/starts-with? playbook-file "git@") (str/starts-with? playbook-file "ssh://git@")) false)
