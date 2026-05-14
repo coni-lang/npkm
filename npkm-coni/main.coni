@@ -297,7 +297,9 @@
     (let [s (:spec this)
           path (:path s)
           line (:line s)
-          pattern (:regexp s)]
+          pattern (:regexp s)
+          is-diff (:__diff__ (:__vars__ s))
+          is-dry-run (:__dry_run__ (:__vars__ s))]
       (if pattern
         ;; Regexp mode: find and replace matching lines, or append if no match
         (let [content (if (io/exists? path) (io/read-file path) "")
@@ -315,13 +317,16 @@
                             (:lines result)
                             (conj (:lines result) line))
               new-content (str/join "\n" final-lines)]
-          (io/write-file path new-content)
-          nil)
+    
+      (print-diff content new-content path (is-bw))
+          (if (not is-dry-run) (io/write-file path new-content))
+          (if is-dry-run "  skipping module execution (dry-run)" nil))
         ;; No regexp: just append the line
         (let [existing (if (io/exists? path) (io/read-file path) "")
-              new-content (str existing line "\n")]
-          (io/write-file path new-content)
-          nil)))))
+              new-content (str existing (if (str/ends-with? existing "\n") "" "\n") line "\n")]
+          (if is-diff (print-diff existing new-content path (is-bw)))
+          (if (not is-dry-run) (io/write-file path new-content))
+          (if is-dry-run "  skipping module execution (dry-run)" nil))))))
 
 (defrecord ReplaceTask [spec]
   PlaybookTask
@@ -330,10 +335,14 @@
           path (:path s)
           pattern (:regexp s)
           replacement (:replace s)
-          content (io/read-file path)
+          is-diff (:__diff__ (:__vars__ s))
+          is-dry-run (:__dry_run__ (:__vars__ s))
+          content (if (io/exists? path) (io/read-file path) "")
           new-content (str/replace-regex content pattern replacement)]
-      (io/write-file path new-content)
-      nil)))
+
+      (print-diff content new-content path (is-bw))
+      (if (not is-dry-run) (io/write-file path new-content))
+      (if is-dry-run "  skipping module execution (dry-run)" nil))))
 
 (defrecord SystemdTask [spec]
   PlaybookTask
@@ -640,6 +649,19 @@
         (subs t 1 (- (count t) 1))
         t))))
 
+(defn print-diff [old new path is-bw]
+  (if (not= old new)
+    (try
+      (do
+        (io/write-file "tmp/npkm_diff_old" old)
+        (io/write-file "tmp/npkm_diff_new" new)
+        (let [res (shell/sh "git diff --no-index --color tmp/npkm_diff_old tmp/npkm_diff_new")]
+          (if (> (count (:stdout res)) 0)
+            (if is-bw
+              (println "--- DIFF for" path "---\n" (strip-colors (:stdout res)))
+              (println "--- DIFF for" path "---\n" (:stdout res))))))
+      (catch e (println "PRINT-DIFF ERR:" e)))))
+
 (defn parse-inventory-yaml [content]
   (let [lines (str/split content "\n")]
     (loop [rem lines
@@ -849,7 +871,8 @@ v-val v-clean
             delay-ms (* 1000 delay-sec)
             out-str (loop [attempt 1]
                       (let [res (try
-                                  (let [o (if (:__dry_run__ runtime-vars)
+                                  (let [supports-check (or (= k :template) (= k :lineinfile) (= k :replace))
+                                        o (if (and (:__dry_run__ runtime-vars) (not supports-check))
                                             "  skipping module execution (dry-run)"
                                             (execute (constructor v-with-vars)))]
                                     {:ok true :val o})
@@ -1214,7 +1237,7 @@ v-val v-clean
                     (recur (rest rem-handlers))))))
             nil))
         nil))))
-(defn execute-playbook [parsed-content inventory global-vars is-bw yaml-content is-debug is-dry-run]
+(defn execute-playbook [parsed-content inventory global-vars is-bw yaml-content is-debug is-dry-run is-diff]
   (let [plays (if (and (vector? parsed-content) (map? (first parsed-content)) (:tasks (first parsed-content)))
                 parsed-content
                 (let [play-hosts (if yaml-content (extract-hosts yaml-content) (if (map? parsed-content) (:hosts parsed-content "localhost") "localhost"))]
@@ -1229,7 +1252,7 @@ v-val v-clean
               target-group (if (:hosts play) (:hosts play) "localhost")
               p-vars (if (:vars play) (:vars play) {})
               forks (if (:forks play) (:forks play) (if (get play "forks") (get play "forks") 1))
-              base-vars (merge play-vars p-vars {:__debug__ is-debug :__dry_run__ is-dry-run})
+              base-vars (merge play-vars p-vars {:__debug__ is-debug :__dry_run__ is-dry-run :__diff__ is-diff})
               tasks (:tasks play)
               target-hosts (if (and inventory (> (count (keys inventory)) 0)) (get-hosts inventory target-group) (if (= target-group "localhost") ["localhost"] [target-group]))]
           (if (and (> forks 1) (> (count target-hosts) 1))
@@ -1266,6 +1289,7 @@ v-val v-clean
         is-bw (some (fn [x] (= x "-bw")) flags)
         is-debug (some (fn [x] (or (= x "--verbose") (= x "--debug"))) flags)
         is-dry-run (some (fn [x] (or (= x "--dry-run") (= x "--check"))) flags)
+        is-diff (some (fn [x] (= x "--diff")) flags)
         inv-file (loop [i 0] (if (>= i (count args)) nil (if (= (nth args i) "-i") (nth args (+ i 1)) (recur (+ i 1)))))
         inventory (if inv-file (parse-inventory inv-file) nil)
         lbl-idx (loop [i 0] (if (>= i (count args)) -1 (if (= (nth args i) "--labels") i (recur (+ i 1)))))
@@ -1292,6 +1316,7 @@ v-val v-clean
         (println "  -h    shows help and supported tasks")
         (println "  --doc generates markdown and mermaid documentation for playbook and inventory")
         (println "  --dry-run, --check    simulate execution without making changes")
+        (println "  --diff                show differences in files being changed")
         (println "  --labels   comma-separated labels to execute")
         (println "  --names    comma-separated task names to execute")
         (println "  -bw   disable color output")
@@ -1404,7 +1429,7 @@ v-val v-clean
                       cfg (:cfg parsed-data)]
                   (do
                     (shell/sh (str "cd " tmp-dir))
-                    (execute-playbook tasks inventory cfg is-bw content is-debug is-dry-run)))
+                    (execute-playbook tasks inventory cfg is-bw content is-debug is-dry-run is-diff)))
                 (do (if is-bw (println "Error cloning git repo:" (:stderr res)) (println "\033[31mError cloning git repo:" (:stderr res) "\033[0m")) (sys-exit 1)))))
           (if (str/includes? playbook-file "http")
             (let [dest (if (or (str/ends-with? playbook-file ".yml") (str/ends-with? playbook-file ".yaml")) "tmp/remote-playbook.yml" "tmp/remote-playbook.edn")
@@ -1415,7 +1440,7 @@ v-val v-clean
                       parsed-data (parse-playbook dest content)
                       tasks (:tasks parsed-data)
                       cfg (:cfg parsed-data)]
-                  (execute-playbook tasks inventory cfg is-bw content is-debug is-dry-run))
+                  (execute-playbook tasks inventory cfg is-bw content is-debug is-dry-run is-diff))
                 (do (if is-bw (println "Failed to download playbook") (println "\033[31mFailed to download playbook\033[0m")) (sys-exit 1))))
             (if (not (io/exists? playbook-file))
               (do
@@ -1425,7 +1450,7 @@ v-val v-clean
                         parsed-data (parse-playbook playbook-file content)
                         tasks (:tasks parsed-data)
                         cfg (:cfg parsed-data)]
-                    (execute-playbook tasks inventory cfg is-bw content is-debug is-dry-run))))))))))
+                    (execute-playbook tasks inventory cfg is-bw content is-debug is-dry-run is-diff))))))))))
 
 )
 (if (not (some (fn [x] (= x "test")) (sys-os-args)))
