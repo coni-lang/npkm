@@ -1,0 +1,44 @@
+- name: Flow Control Demo
+  hosts: localhost
+  tasks:
+    - name: Ensure demo directory exists
+      file:
+        path: tmp/flow-demo
+        state: directory
+
+    - name: State-dependent task triggering a handler
+      shell:
+        cmd: "echo 'Configuration updated' > tmp/flow-demo/config.txt"
+      notify: "Restart Service"
+
+    - name: Unstable operations block
+      block:
+        - name: "Attempt to download non-existent file"
+          shell:
+            cmd: "curl -f -sL http://localhost:9999/does-not-exist -o tmp/flow-demo/file.txt"
+        
+        - name: "This will not run"
+          debug:
+            msg: "You will never see this message because the block failed"
+            
+      rescue:
+        - name: "Fallback: Create local file instead"
+          shell:
+            cmd: "echo 'Fallback data' > tmp/flow-demo/file.txt"
+        - name: "Log the recovery"
+          debug:
+            msg: "Successfully recovered from the failed download!"
+            
+      always:
+        - name: "Cleanup temporary files"
+          file:
+            path: tmp/flow-demo/config.txt
+            state: absent
+        - name: "Always block executed"
+          debug:
+            msg: "Cleanup complete, proceeding with playbook."
+
+  handlers:
+    - name: "Restart Service"
+      debug:
+        msg: "Handler triggered! Service is being restarted..."

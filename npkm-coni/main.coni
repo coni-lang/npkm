@@ -251,7 +251,7 @@
       (if (is-bw)
         (println "  FAILED:" msg)
         (println "\033[31m  FAILED:" msg "\033[0m"))
-      (sys-exit 1))))
+      (throw msg))))
 
 (defrecord UnzipTask [spec]
   PlaybookTask
@@ -582,7 +582,11 @@
     (let [res (if is-yaml
                 (read-string (yaml/yaml-to-edn interp-content))
                 (let [parsed (read-string interp-content)]
-                  (if (:tasks parsed) (:tasks parsed) parsed)))]
+                  (if (map? parsed)
+                    (if (:tasks parsed)
+                      [parsed]
+                      parsed)
+                    parsed)))]
       {:tasks res :cfg cfg})))
 
 
@@ -829,25 +833,50 @@ v-val v-clean
             v-with-become (if (and (map? v-with-debug) raw-become) (assoc v-with-debug :__become__ true) v-with-debug)
             v-with-vars (if (map? v-with-become) (assoc v-with-become :__vars__ runtime-vars) v-with-become)
             constructor (get playbook-task-registry k)
-            out-str (if (:__dry_run__ runtime-vars)
-                      "  skipping module execution (dry-run)"
-                      (execute (constructor v-with-vars)))
+            retries (int (if (:retries interp-raw-task) (:retries interp-raw-task) (if (and (map? v) (:retries v)) (:retries v) 1)))
+            delay-sec (int (if (:delay interp-raw-task) (:delay interp-raw-task) (if (and (map? v) (:delay v)) (:delay v) 5)))
+            delay-ms (* 1000 delay-sec)
+            out-str (loop [attempt 1]
+                      (let [res (try
+                                  (let [o (if (:__dry_run__ runtime-vars)
+                                            "  skipping module execution (dry-run)"
+                                            (execute (constructor v-with-vars)))]
+                                    {:ok true :val o})
+                                  (catch e
+                                    {:ok false :err e}))]
+                        (if (:ok res)
+                          (:val res)
+                          (if (< attempt retries)
+                            (do
+                              (if (is-bw)
+                                (println "  [retry] Attempt" attempt "failed. Retrying in" delay-sec "seconds...")
+                                (println "\033[33m  [retry] Attempt" attempt "failed. Retrying in" delay-sec "seconds...\033[0m"))
+                              (sleep delay-ms)
+                              (recur (+ attempt 1)))
+                            (throw (:err res))))))
             reg-key (if (:register interp-raw-task) (:register interp-raw-task) (if (and (map? v) (:register v)) (:register v) nil))]
         (do
           (if (and (:__debug__ runtime-vars) out-str (not (= (str/trim (str out-str)) "")))
             (println (str/trim (str out-str)))
             nil)
-          (if (is-bw)
-            (if (:__dry_run__ runtime-vars)
-              (println "  ok (dry-run)\n")
-              (println "  changed\n"))
-            (if (:__dry_run__ runtime-vars)
-              (println "\033[32m  ok (dry-run)\033[0m\n")
-              (println "\033[32m  changed\033[0m\n")))
-          {:vars (if reg-key
-                   (assoc runtime-vars reg-key (str/trim (if out-str (str out-str) "")))
-                   runtime-vars)
-           :output (str/trim (if out-str (str out-str) ""))}))
+          (let [changed-when-expr (if (contains? interp-raw-task :changed_when) (:changed_when interp-raw-task)
+                                    (if (and (map? v) (contains? v :changed_when)) (:changed_when v) nil))
+                is-changed (if (nil? changed-when-expr) true
+                             (if (or (= changed-when-expr true) (= changed-when-expr false)) changed-when-expr
+                               (if (string? changed-when-expr) (eval-when changed-when-expr (assoc runtime-vars :result (str/trim (if out-str (str out-str) ""))))
+                                 true)))]
+            (if (is-bw)
+              (if (:__dry_run__ runtime-vars)
+                (println "  ok (dry-run)\n")
+                (if is-changed (println "  changed\n") (println "  ok\n")))
+              (if (:__dry_run__ runtime-vars)
+                (println "\033[32m  ok (dry-run)\033[0m\n")
+                (if is-changed (println "\033[33m  changed\033[0m\n") (println "\033[32m  ok\033[0m\n"))))
+            {:vars (if reg-key
+                     (assoc runtime-vars reg-key (str/trim (if out-str (str out-str) "")))
+                     runtime-vars)
+             :output (str/trim (if out-str (str out-str) ""))
+             :changed is-changed})))
       (do
         (if (is-bw)
           (println "  warning: unknown or missing module type")
@@ -899,69 +928,117 @@ v-val v-clean
                 (if (empty? rem)
                   curr-vars
                   (recur (rest rem) (run-task (first rem) curr-vars))))))))
-      ;; --- normal task processing ---
-      (let [interp-raw-task (walk-interp raw-task runtime-vars)
-            match (get-task-match interp-raw-task)
-            mod-args (if match (second match) {})
-            when-clause (if (:when interp-raw-task) (:when interp-raw-task)
-                          (if (get interp-raw-task "when") (get interp-raw-task "when")
-                            (if (:when mod-args) (:when mod-args)
-                              (get mod-args "when"))))
-            should-run (eval-when when-clause runtime-vars)
-            skip-labels? (if (empty? @target-labels) false
-                           (let [task-labels (if (:labels interp-raw-task) (:labels interp-raw-task) [])
-                                 task-labels-vec (if (vector? task-labels) task-labels [task-labels])]
-                             (not (some (fn [l] (some (fn [tl] (= l tl)) @target-labels)) task-labels-vec))))
-            skip-names? (if (empty? @target-names) false
-                          (let [task-name (:name interp-raw-task)]
-                            (not (some (fn [tn] (= task-name tn)) @target-names))))
-            skip-task? (or skip-labels? skip-names?)
-            should-run (and should-run (not skip-task?))
-            ;; Check for loop items at root level or nested inside the module map
-            items (let [loop-val (if (:loop interp-raw-task) (:loop interp-raw-task)
-                                  (if (:items interp-raw-task) (:items interp-raw-task)
-                                  (if (:with_items interp-raw-task) (:with_items interp-raw-task)
-                                  (if (:loop mod-args) (:loop mod-args)
-                                  (if (:items mod-args) (:items mod-args)
-                                  (:with_items mod-args))))))]
-                    (if loop-val
-                      ;; If loop is a string referencing a runtime var, resolve it
-                      (if (string? loop-val)
-                        (let [resolved (resolve-var-path runtime-vars loop-val)]
-                          (if (vector? resolved) resolved
-                              (if resolved [resolved] [])))
-                        (if (vector? loop-val) loop-val []))
-                      nil))]
-        (if (is-bw)
-          (println "TASK [" (:name interp-raw-task) "]")
-          (println "\033[36mTASK [" (:name interp-raw-task) "]\033[0m"))
-        (if (not should-run)
-          (do
-            (if skip-task?
-              (if (is-bw)
-                (println "  skipping: label or name filter not met\n")
-                (println "\033[36m  skipping: label or name filter not met\033[0m\n"))
-              (if (is-bw)
-                (println "  skipping: condition not met\n")
-                (println "\033[36m  skipping: condition not met\033[0m\n")))
-            runtime-vars)
-          (if items
-            ;; Loop mode: execute task once per item
-            (let [reg-key (if (:register interp-raw-task) (:register interp-raw-task) (:register mod-args))]
-              (loop [rem items
-                     curr-vars runtime-vars
-                     outputs []]
-                (if (empty? rem)
-                  (if reg-key
-                    (assoc curr-vars reg-key outputs)
-                    curr-vars)
-                  (let [item (first rem)
-                        item-task (replace-item-placeholders interp-raw-task item)
-                        result (run-single-task item-task curr-vars)]
-                    (recur (rest rem) (:vars result) (conj outputs (:output result)))))))
-            ;; Normal mode: single execution
-            (:vars (run-single-task interp-raw-task runtime-vars))))))))
-
+      ;; --- block processing ---
+      (let [block-tasks (if (:block raw-task) (:block raw-task) (get raw-task "block"))]
+        (if block-tasks
+          (let [when-clause (if (:when raw-task) (:when raw-task) (get raw-task "when"))
+                should-run (eval-when when-clause runtime-vars)]
+            (if should-run
+              (let [rescue-tasks (if (:rescue raw-task) (:rescue raw-task) (get raw-task "rescue"))
+                    always-tasks (if (:always raw-task) (:always raw-task) (get raw-task "always"))]
+                (let [vars-after-block
+                      (try
+                        (loop [rem block-tasks curr-vars runtime-vars]
+                          (if (empty? rem)
+                            curr-vars
+                            (recur (rest rem) (run-task (first rem) curr-vars))))
+                        (catch e
+                          (if rescue-tasks
+                            (do
+                              (if (is-bw) (println "  [rescue] block failed, running rescue tasks...") (println "\033[33m  [rescue] block failed, running rescue tasks...\033[0m"))
+                              (loop [rem rescue-tasks curr-vars runtime-vars]
+                                (if (empty? rem)
+                                  curr-vars
+                                  (recur (rest rem) (run-task (first rem) curr-vars)))))
+                            (throw e))))]
+                  (if always-tasks
+                    (do
+                      (if (is-bw) (println "  [always] running always tasks...") (println "\033[36m  [always] running always tasks...\033[0m"))
+                      (loop [rem always-tasks curr-vars vars-after-block]
+                        (if (empty? rem)
+                          curr-vars
+                          (recur (rest rem) (run-task (first rem) curr-vars)))))
+                    vars-after-block)))
+              runtime-vars))
+          ;; --- normal task processing ---
+          (let [interp-raw-task (walk-interp raw-task runtime-vars)
+                match (get-task-match interp-raw-task)
+                mod-args (if match (second match) {})
+                when-clause (if (:when interp-raw-task) (:when interp-raw-task)
+                              (if (get interp-raw-task "when") (get interp-raw-task "when")
+                                (if (:when mod-args) (:when mod-args)
+                                  (get mod-args "when"))))
+                should-run (eval-when when-clause runtime-vars)
+                skip-labels? (if (empty? @target-labels) false
+                               (let [task-labels (if (:labels interp-raw-task) (:labels interp-raw-task) [])
+                                     task-labels-vec (if (vector? task-labels) task-labels [task-labels])]
+                                 (not (some (fn [l] (some (fn [tl] (= l tl)) @target-labels)) task-labels-vec))))
+                skip-names? (if (empty? @target-names) false
+                              (let [task-name (:name interp-raw-task)]
+                                (not (some (fn [tn] (= task-name tn)) @target-names))))
+                skip-task? (or skip-labels? skip-names?)
+                should-run (and should-run (not skip-task?))
+                ;; Check for loop items at root level or nested inside the module map
+                items (let [loop-val (if (:loop interp-raw-task) (:loop interp-raw-task)
+                                      (if (:items interp-raw-task) (:items interp-raw-task)
+                                      (if (:with_items interp-raw-task) (:with_items interp-raw-task)
+                                      (if (:loop mod-args) (:loop mod-args)
+                                      (if (:items mod-args) (:items mod-args)
+                                      (:with_items mod-args))))))]
+                        (if loop-val
+                          ;; If loop is a string referencing a runtime var, resolve it
+                          (if (string? loop-val)
+                            (let [resolved (resolve-var-path runtime-vars loop-val)]
+                              (if (vector? resolved) resolved
+                                  (if resolved [resolved] [])))
+                            (if (vector? loop-val) loop-val []))
+                          nil))]
+            (if (is-bw)
+              (println "TASK [" (:name interp-raw-task) "]")
+              (println "\033[36mTASK [" (:name interp-raw-task) "]\033[0m"))
+            (if (not should-run)
+              (do
+                (if skip-task?
+                  (if (is-bw)
+                    (println "  skipping: label or name filter not met\n")
+                    (println "\033[36m  skipping: label or name filter not met\033[0m\n"))
+                  (if (is-bw)
+                    (println "  skipping: condition not met\n")
+                    (println "\033[36m  skipping: condition not met\033[0m\n")))
+                runtime-vars)
+              (if items
+                ;; Loop mode: execute task once per item
+                (let [reg-key (if (:register interp-raw-task) (:register interp-raw-task) (:register mod-args))]
+                  (loop [rem items
+                         curr-vars runtime-vars
+                         outputs []]
+                    (if (empty? rem)
+                      (if reg-key
+                        (assoc curr-vars reg-key outputs)
+                        curr-vars)
+                      (let [item (first rem)
+                            item-task (replace-item-placeholders interp-raw-task item)
+                            result (run-single-task item-task curr-vars)
+                            changed (:changed result)
+                            notified (if (:notify interp-raw-task) (:notify interp-raw-task) (if (:notify mod-args) (:notify mod-args) nil))
+                            notified-list (if notified (if (vector? notified) notified [notified]) [])
+                            curr-notified (if (:__notified_handlers__ (:vars result)) (:__notified_handlers__ (:vars result)) [])
+                            new-notified (if (and changed (> (count notified-list) 0))
+                                           (loop [r notified-list acc curr-notified]
+                                             (if (empty? r) acc (recur (rest r) (conj acc (first r)))))
+                                           curr-notified)]
+                        (recur (rest rem) (assoc (:vars result) :__notified_handlers__ new-notified) (conj outputs (:output result)))))))
+                ;; Normal mode: single execution
+                (let [result (run-single-task interp-raw-task runtime-vars)
+                      changed (:changed result)
+                      notified (if (:notify interp-raw-task) (:notify interp-raw-task) (if (:notify mod-args) (:notify mod-args) nil))
+                      notified-list (if notified (if (vector? notified) notified [notified]) [])
+                      curr-notified (if (:__notified_handlers__ (:vars result)) (:__notified_handlers__ (:vars result)) [])
+                      new-notified (if (and changed (> (count notified-list) 0))
+                                     (loop [r notified-list acc curr-notified]
+                                       (if (empty? r) acc (recur (rest r) (conj acc (first r)))))
+                                     curr-notified)]
+                  (assoc (:vars result) :__notified_handlers__ new-notified))))))))))
 (defn clean-mermaid-text [txt]
   (str/replace (str/replace (str txt) "\"" "'") "\n" " "))
 
@@ -1032,7 +1109,7 @@ v-val v-clean
         plays (if (and (vector? parsed-content) (map? (first parsed-content)) (:tasks (first parsed-content)))
                 parsed-content
                 (let [play-hosts (if yaml-content (extract-hosts yaml-content) (if (map? parsed-content) (:hosts parsed-content "localhost") "localhost"))]
-                   [{:name "Default Play" :hosts play-hosts :tasks (if (map? parsed-content) (:tasks parsed-content) parsed-content)}]))]
+                   [{:name "Default Play" :hosts play-hosts :tasks (if (map? parsed-content) (:tasks parsed-content) parsed-content) :handlers (if (map? parsed-content) (:handlers parsed-content) nil)}]))]
     (loop [rem-plays plays
            p-idx 0
            acc (str cfg-str "### Playbook Flow: " playbook-file "\n```mermaid\ngraph TD\n")]
@@ -1060,42 +1137,64 @@ v-val v-clean
         runtime-vars (merge base-vars host-vars)
         os-family (if (:ansible_os_family runtime-vars) (:ansible_os_family runtime-vars) (if (= host "localhost") (get-os-family) "Unix"))
         runtime-vars (assoc runtime-vars :ansible_os_family os-family :inventory_hostname host)
-        runtime-vars (if conn-cfg (assoc runtime-vars :__connection__ conn-cfg) runtime-vars)]
+        runtime-vars (if conn-cfg (assoc runtime-vars :__connection__ conn-cfg) runtime-vars)
+        handlers (if (:handlers play) (:handlers play) (get play "handlers"))]
     (if is-bw
       (println "\nPLAY [" (:name play) "]\nHOST [" host "]")
       (println "\n\033[36mPLAY [" (:name play) "]\033[0m\n\033[35mHOST [" host "]\033[0m"))
-    (loop [rem-tasks tasks
-           curr-vars runtime-vars]
-      (if (empty? rem-tasks)
-        nil
-        (let [t (first rem-tasks)
-              is-parallel-group (or (:parallel t) (get t "parallel"))]
-          (if is-parallel-group
-            ;; Parallel task group: fan-out via spawn+channels
-            (let [parallel-tasks (if (:tasks t) (:tasks t) (get t "tasks" []))
-                  result-ch (chan (count parallel-tasks))]
-              (doseq [pt parallel-tasks]
-                (spawn (fn []
-                  (run-task pt curr-vars)
-                  (>! result-ch :done))))
-              ;; fan-in: drain all results
-              (loop [n (count parallel-tasks)]
-                (if (> n 0)
-                  (do (<! result-ch) (recur (- n 1)))
-                  nil))
+    (let [final-vars
+          (try
+            (loop [rem-tasks tasks
+                   curr-vars runtime-vars]
+              (if (empty? rem-tasks)
+                curr-vars
+                (let [t (first rem-tasks)
+                      is-parallel-group (or (:parallel t) (get t "parallel"))]
+                  (if is-parallel-group
+                    ;; Parallel task group: fan-out via spawn+channels
+                    (let [parallel-tasks (if (:tasks t) (:tasks t) (get t "tasks" []))
+                          result-ch (chan (count parallel-tasks))]
+                      (doseq [pt parallel-tasks]
+                        (spawn (fn []
+                          (run-task pt curr-vars)
+                          (>! result-ch :done))))
+                      ;; fan-in: drain all results
+                      (loop [n (count parallel-tasks)]
+                        (if (> n 0)
+                          (do (<! result-ch) (recur (- n 1)))
+                          nil))
+                      (if is-bw
+                        (println "  [parallel group complete]\n")
+                        (println "\033[36m  [parallel group complete]\033[0m\n"))
+                      (recur (rest rem-tasks) curr-vars))
+                    ;; Normal sequential task
+                    (let [new-vars (run-task t curr-vars)]
+                      (recur (rest rem-tasks) new-vars))))))
+            (catch e
               (if is-bw
-                (println "  [parallel group complete]\n")
-                (println "\033[36m  [parallel group complete]\033[0m\n"))
-              (recur (rest rem-tasks) curr-vars))
-            ;; Normal sequential task
-            (let [new-vars (run-task t curr-vars)]
-              (recur (rest rem-tasks) new-vars))))))))
-
+                (println "  FAILED:" e)
+                (println "\033[31m  FAILED:" e "\033[0m"))
+              (sys-exit 1)))]
+      (if (and handlers (> (count handlers) 0))
+        (let [notified (:__notified_handlers__ final-vars)]
+          (if (and notified (> (count notified) 0))
+            (do
+              (if is-bw (println "  [running notified handlers]") (println "\033[35m  [running notified handlers]\033[0m"))
+              (loop [rem-handlers handlers]
+                (if (empty? rem-handlers)
+                  nil
+                  (let [h (first rem-handlers)]
+                    (if (some (fn [n] (= n (:name h))) notified)
+                      (run-task h final-vars)
+                      nil)
+                    (recur (rest rem-handlers))))))
+            nil))
+        nil))))
 (defn execute-playbook [parsed-content inventory global-vars is-bw yaml-content is-debug is-dry-run]
   (let [plays (if (and (vector? parsed-content) (map? (first parsed-content)) (:tasks (first parsed-content)))
                 parsed-content
                 (let [play-hosts (if yaml-content (extract-hosts yaml-content) (if (map? parsed-content) (:hosts parsed-content "localhost") "localhost"))]
-                   [{:name "Default Play" :hosts play-hosts :tasks (if (map? parsed-content) (:tasks parsed-content) parsed-content)}]))]
+                   [{:name "Default Play" :hosts play-hosts :tasks (if (map? parsed-content) (:tasks parsed-content) parsed-content) :handlers (if (map? parsed-content) (:handlers parsed-content) nil)}]))]
     (loop [rem-plays plays
            play-vars global-vars]
       (if (empty? rem-plays)

@@ -1,0 +1,15 @@
+tasks:
+  - name: Run a successful task that is marked as ok
+    shell:
+      cmd: "echo 'Not really changing anything'"
+    changed_when: false
+
+  - name: Run a task that fails but retries
+    shell:
+      cmd: "if [ ! -f tmp/retry.txt ]; then echo 'First run' > tmp/retry.txt && exit 1; else exit 0; fi"
+    retries: 3
+    delay: 1
+
+  - name: Cleanup
+    shell:
+      cmd: "rm tmp/retry.txt"

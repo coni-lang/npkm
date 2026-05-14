@@ -15,7 +15,12 @@ NPKM is a lightweight, declarative automation and provisioning tool (similar to 
 
 ## Release History
 
-### v1.5 "Quantum Weaver" (Latest)
+### v1.6 "Flow Control" (Latest)
+- **Advanced Flow Control**: Full support for `block`, `rescue`, and `always` error-handling structures to manage failure scenarios gracefully.
+- **Handlers & Notifications**: Trigger state-dependent `handlers` seamlessly via the `notify` keyword.
+- **Parallel Host Execution**: Configure simultaneous SSH deployment via the `forks` parameter, scaling seamlessly with native goroutines.
+
+### v1.5 "Quantum Weaver"
 - **[Native Templating (Variables & Loops)](#native-templating-variables--loops)**: Context-aware template injection using global configs, host vars, and loop iteration.
 - **[Multi-Play Architecture](#multi-play-architecture-multiple-servers)**: Deploy to multiple, different servers within a single playbook run.
 - **[Documentation Generation](#documentation-generation)**: Auto-generate markdown and Mermaid graphs (`--doc`).
@@ -226,6 +231,45 @@ The included file must be a flat YAML list of tasks (no `hosts:` or `plays:` wra
   service:
     name: nginx
     state: started
+```
+
+### Flow Control & Error Handling
+NPKM natively supports Ansible-style `block`, `rescue`, and `always` task groupings for sophisticated error recovery and cleanup.
+
+```yaml
+tasks:
+  - name: Unstable operations
+    block:
+      - name: "Attempt download"
+        get_url:
+          url: "http://example.com/unstable"
+          dest: "/tmp/file"
+    rescue:
+      - name: "Fallback: Create local file"
+        shell:
+          cmd: "echo 'Fallback data' > /tmp/file"
+    always:
+      - name: "Always block executed"
+        debug:
+          msg: "Proceeding with playbook execution."
+```
+
+### Handlers & State Notification
+Tie actions exclusively to state changes using the `notify` and `handlers` mechanism.
+
+```yaml
+tasks:
+  - name: "Update configuration file"
+    copy:
+      src: "nginx.conf"
+      dest: "/etc/nginx/nginx.conf"
+    notify: "Restart Nginx"
+
+handlers:
+  - name: "Restart Nginx"
+    service:
+      name: nginx
+      state: restarted
 ```
 
 ## Global Configuration Interpolation
