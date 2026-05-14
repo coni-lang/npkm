@@ -117,7 +117,7 @@
           ;; sh is POSIX-guaranteed (unlike bash). Single-quotes in cmd are safely escaped.
           ;; Remote Windows: pass through as-is (no sh available over SSH).
           inner-remote-cmd (if cwd (str "cd " cwd " && " cmd) cmd)
-          escaped-inner    (str/replace inner-remote-cmd "'" "'\"'\"'")
+          escaped-inner    (str/replace (str inner-remote-cmd) "'" "'\"'\"'")
           remote-cmd (if is-remote-win
                        (str sudo-pfx cmd)
                        (str sudo-pfx "sh -c '" escaped-inner "'"))
@@ -784,9 +784,10 @@ v-val v-clean
     (if (empty? rem)
       nil
       (let [k (first rem)
-            v (get raw k)]
+            v (if (get raw k) (get raw k) (get raw (keyword k)))]
         (if v
-          [k v]
+          (let [v-clean (if (map? v) v (if (or (= k :shell) (= k :command)) {:cmd v} {:_val v}))]
+            [k v-clean])
           (recur (rest rem)))))))
 
 (defn replace-item-placeholders
@@ -1169,7 +1170,10 @@ v-val v-clean
       (let [t (first rem)
             name (if (:name t) (clean-mermaid-text (:name t)) (str "Task_" prefix "_" idx))
             node-id (str prefix "_T" idx)
-            include-src (if (:include_tasks t) (:include_tasks t) (get t "include_tasks"))]
+            include-src (if (:include_tasks t) (:include_tasks t) (get t "include_tasks"))
+            block-tasks (if (:block t) (:block t) (get t "block"))
+            rescue-tasks (if (:rescue t) (:rescue t) (get t "rescue"))
+            always-tasks (if (:always t) (:always t) (get t "always"))]
         (if include-src
           (let [when-clause (if (:when t) (str " (when: " (:when t) ")") "")
                 subgraph-id (str prefix "_inc" idx)
@@ -1186,12 +1190,27 @@ v-val v-clean
                     full-acc (str new-acc sub-start (:acc sub-res) sub-end)]
                 (recur (rest rem) full-acc subgraph-id (+ idx 1)))
               (recur (rest rem) new-acc subgraph-id (+ idx 1))))
-          (let [module-name (if (get-task-match t) (first (get-task-match t)) "unknown")
-                when-clause (if (:when t) (str " (when: " (:when t) ")") "")
-                node-def (str "  " node-id "[\"" module-name ": " name when-clause "\"]\n")
-                edge (if prev-id (str "  " prev-id " --> " node-id "\n") "")
-                new-acc (str curr-acc node-def edge)]
-            (recur (rest rem) new-acc node-id (+ idx 1))))))))
+          (if block-tasks
+            (let [when-clause (if (:when t) (str " (when: " (:when t) ")") "")
+                  subgraph-id (str prefix "_blk" idx)
+                  node-def (str "  " subgraph-id "[\"Block" when-clause "\"]\n")
+                  edge (if prev-id (str "  " prev-id " --> " subgraph-id "\n") "")
+                  new-acc (str curr-acc node-def edge)
+                  sub-start (str "  subgraph sub_" subgraph-id " [\"Block Tasks\"]\n")
+                  sub-res (doc-tasks block-tasks (str prefix "_blk" idx) "" nil)
+                  rescue-res (if rescue-tasks (doc-tasks rescue-tasks (str prefix "_rsc" idx) "" nil) nil)
+                  rescue-str (if rescue-res (str "  subgraph sub_rsc_" subgraph-id " [\"Rescue Tasks\"]\n" (:acc rescue-res) "  end\n") "")
+                  always-res (if always-tasks (doc-tasks always-tasks (str prefix "_alw" idx) "" nil) nil)
+                  always-str (if always-res (str "  subgraph sub_alw_" subgraph-id " [\"Always Tasks\"]\n" (:acc always-res) "  end\n") "")
+                  sub-end "  end\n"
+                  full-acc (str new-acc sub-start (:acc sub-res) sub-end rescue-str always-str)]
+              (recur (rest rem) full-acc subgraph-id (+ idx 1)))
+            (let [module-name (if (get-task-match t) (first (get-task-match t)) "unknown")
+                  when-clause (if (:when t) (str " (when: " (:when t) ")") "")
+                  node-def (str "  " node-id "[\"" module-name ": " name when-clause "\"]\n")
+                  edge (if prev-id (str "  " prev-id " --> " node-id "\n") "")
+                  new-acc (str curr-acc node-def edge)]
+            (recur (rest rem) new-acc node-id (+ idx 1)))))))))
 
 (defn generate-doc-inventory [inventory]
   (if (not inventory)
