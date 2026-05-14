@@ -783,43 +783,51 @@ v-val v-clean
         node))))
 
 (defn load-included-tasks [source]
-  "Load a task list from a local .yml file, a directory, or a git repo URL."
+  "Load a task list from a local .yml file, a directory, or a git repo URL. Returns {:tasks [] :defaults {}}"
   (let [is-git (or (str/ends-with? source ".git")
                    (str/starts-with? source "git://")
                    (str/starts-with? source "git@")
                    (str/starts-with? source "ssh://git@"))]
     (if is-git
-      ;; --- git repo: clone into tmp and look for tasks file ---
       (let [tmp-dir "tmp/npkm-include-coni"]
         (shell/sh (str "rm -rf " tmp-dir))
         (let [res (shell/sh (str "git clone " source " " tmp-dir))]
           (if (= (:code res) 0)
-            (let [p1 (str tmp-dir "/tasks.yml")
-                  p2 (str tmp-dir "/playbook.yml")
-                  p3 (str tmp-dir "/playbook.yaml")
-                  real-p (if (io/exists? p1) p1 (if (io/exists? p2) p2 p3))
-                  content (io/read-file real-p)
-                  parsed (read-string (yaml/yaml-to-edn content))]
-              (if (vector? parsed) parsed []))
+            (let [t1 (str tmp-dir "/tasks/main.yml")
+                  t2 (str tmp-dir "/tasks.yml")
+                  t3 (str tmp-dir "/playbook.yml")
+                  real-t (if (io/exists? t1) t1 (if (io/exists? t2) t2 (if (io/exists? t3) t3 "")))
+                  t-content (if (> (count real-t) 0) (io/read-file real-t) "")
+                  t-parsed (if (> (count t-content) 0) (read-string (yaml/yaml-to-edn t-content)) [])
+                  d1 (str tmp-dir "/defaults/main.yml")
+                  d-content (if (io/exists? d1) (io/read-file d1) "")
+                  d-parsed (if (> (count d-content) 0) (read-string (yaml/yaml-to-edn d-content)) {})
+                  tasks-vec (if (vector? t-parsed) t-parsed [])
+                  defs-map (if (map? d-parsed) d-parsed {})]
+              {:tasks tasks-vec :defaults defs-map})
             (throw (str "include_tasks: failed to clone " source ": " (:stderr res))))))
-      ;; --- local directory: use first .yml found ---
       (if (io/directory? source)
-        (let [entries (io/read-dir source)
-              yml-files (filter (fn [e] (or (str/ends-with? e ".yml") (str/ends-with? e ".yaml"))) entries)
-              first-file (first yml-files)]
-          (if first-file
-            (let [content (io/read-file (str source "/" first-file))
-                  parsed (read-string (yaml/yaml-to-edn content))]
-              (if (vector? parsed) parsed []))
-            (throw (str "include_tasks: no .yml files found in directory: " source))))
-        ;; --- local file ---
+        (let [t1 (str source "/tasks/main.yml")
+              t-content (if (io/exists? t1) (io/read-file t1)
+                          (let [entries (io/read-dir source)
+                                yml-files (filter (fn [e] (or (str/ends-with? e ".yml") (str/ends-with? e ".yaml"))) entries)
+                                first-file (first yml-files)]
+                            (if first-file (io/read-file (str source "/" first-file)) "")))
+              t-parsed (if (> (count t-content) 0) (read-string (yaml/yaml-to-edn t-content)) [])
+              d1 (str source "/defaults/main.yml")
+              d-content (if (io/exists? d1) (io/read-file d1) "")
+              d-parsed (if (> (count d-content) 0) (read-string (yaml/yaml-to-edn d-content)) {})
+              tasks-vec (if (vector? t-parsed) t-parsed [])
+              defs-map (if (map? d-parsed) d-parsed {})]
+          {:tasks tasks-vec :defaults defs-map})
         (if (io/exists? source)
           (let [content (io/read-file source)
                 is-yaml (or (str/ends-with? source ".yml") (str/ends-with? source ".yaml"))
                 parsed (if is-yaml
                          (read-string (yaml/yaml-to-edn content))
-                         (read-string content))]
-            (if (vector? parsed) parsed []))
+                         (read-string content))
+                tasks-vec (if (vector? parsed) parsed [])]
+            {:tasks tasks-vec :defaults {}})
           (throw (str "include_tasks: file not found: " source)))))))
 
 (defn eval-when [expr vars]
@@ -969,9 +977,13 @@ v-val v-clean
             (if (is-bw)
               (println (str "  including tasks from: " interp-src "\n"))
               (println (str "\033[32m  including tasks from: " interp-src "\033[0m\n")))
-            (let [included-tasks (load-included-tasks interp-src)]
+            (let [included-data (load-included-tasks interp-src)
+                  included-tasks (:tasks included-data)
+                  defaults-vars (:defaults included-data)
+                  task-vars (if (:vars raw-task) (:vars raw-task) {})
+                  merged-vars (merge runtime-vars defaults-vars task-vars)]
               (loop [rem included-tasks
-                     curr-vars runtime-vars]
+                     curr-vars merged-vars]
                 (if (empty? rem)
                   curr-vars
                   (recur (rest rem) (run-task (first rem) curr-vars))))))))
@@ -1107,7 +1119,8 @@ v-val v-clean
                 edge (if prev-id (str "  " prev-id " --> " subgraph-id "\n") "")
                 new-acc (str curr-acc node-def edge)
                 is-git (or (str/ends-with? include-src ".git") (str/starts-with? include-src "git://") (str/starts-with? include-src "git@") (str/starts-with? include-src "ssh://git@"))
-                inc-tasks (load-included-tasks include-src)]
+                inc-data (load-included-tasks include-src)
+                inc-tasks (:tasks inc-data)]
             (if (> (count inc-tasks) 0)
               (let [sub-start (str "  subgraph sub_" subgraph-id " [\"" (if is-git "Remote: " "Local: ") include-src "\"]\n")
                     sub-res (doc-tasks inc-tasks (str prefix "_" idx) "" nil)
