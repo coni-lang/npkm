@@ -17,6 +17,10 @@ intellij {
 }
 
 tasks {
+    patchPluginXml {
+        sinceBuild.set("232")   // 2023.2 — minimum supported
+        untilBuild.set("")      // empty = no upper limit
+    }
     withType<JavaCompile> {
         sourceCompatibility = "17"
         targetCompatibility = "17"
