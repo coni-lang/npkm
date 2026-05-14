@@ -106,15 +106,29 @@
           conn (:__connection__ (:spec this))
           is-debug (:__debug__ (:spec this))
           is-become (:__become__ (:spec this))
+          runtime-vars (:__vars__ (:spec this))
           sudo-pfx (if is-become "sudo " "")
-          cmd-with-sudo (str sudo-pfx cmd)
-          real-cmd (if cwd (str "cd " cwd " && " cmd-with-sudo) cmd-with-sudo)]
+          ;; Detect remote OS: ansible_os_family defaults to "Unix" for remote hosts
+          remote-os (if runtime-vars
+                      (if (:ansible_os_family runtime-vars) (:ansible_os_family runtime-vars) "Unix")
+                      "Unix")
+          is-remote-win (= remote-os "Windows")
+          ;; Remote Unix/macOS: wrap in sh -c '...' so |, &&, ||, <, > are shell operators.
+          ;; sh is POSIX-guaranteed (unlike bash). Single-quotes in cmd are safely escaped.
+          ;; Remote Windows: pass through as-is (no sh available over SSH).
+          inner-remote-cmd (if cwd (str "cd " cwd " && " cmd) cmd)
+          escaped-inner    (str/replace inner-remote-cmd "'" "'\"'\"'")
+          remote-cmd (if is-remote-win
+                       (str sudo-pfx cmd)
+                       (str sudo-pfx "sh -c '" escaped-inner "'"))
+          ;; Local: shell/sh already runs through the OS shell, no wrapping needed.
+          local-cmd (str sudo-pfx (if cwd (str "cd " cwd " && " cmd) cmd))]
       (if conn
         (let [real-conn (assoc conn :debug true)
-              res (sys-ssh-exec real-conn real-cmd)]
+              res (sys-ssh-exec real-conn remote-cmd)]
           (if is-debug
             (do
-              (println "  [DEBUG] Native SSH Command:" real-cmd)
+              (println "  [DEBUG] Native SSH Command:" remote-cmd)
               (println "  [DEBUG] SSH Host:" (:host conn))
               (println "  [DEBUG] Exit Code:" (:code res))
               (if (> (count (:stdout res)) 0) (println "  [DEBUG] STDOUT:\n" (str/trim (:stdout res))))
@@ -122,10 +136,10 @@
           (if (= (:code res) 0) 
             (:stdout res)
             (throw (str "Exit code " (:code res) " : " (:stderr res)))))
-        (let [res (shell/sh real-cmd)]
+        (let [res (shell/sh local-cmd)]
           (if is-debug
             (do
-              (println "  [DEBUG] Command:" real-cmd)
+              (println "  [DEBUG] Command:" local-cmd)
               (println "  [DEBUG] Exit Code:" (:code res))
               (if (> (count (:stdout res)) 0) (println "  [DEBUG] STDOUT:\n" (str/trim (:stdout res))))
               (if (> (count (:stderr res)) 0) (println "  [DEBUG] STDERR:\n" (str/trim (:stderr res))))))
