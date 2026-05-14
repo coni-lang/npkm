@@ -1,19 +1,24 @@
-# NPKM Feature Audit & Roadmap
+# NPKM Feature Audit & Capabilities
 
-## 1. Feature Audit
-
-### ✅ What NPKM Has (Solid Foundation)
+## ✅ NPKM Complete Features
 | Feature | NPKM | Ansible |
 |---|---|---|
 | Shell/Command execution | ✅ `shell`, `command`, `powershell` | ✅ |
 | File management | ✅ `file`, `copy`, `move`, `remove`, `lineinfile`, `replace` | ✅ |
 | Templating (`{{ var }}`) | ✅ | ✅ |
-| Inventory (YAML, INI, inline) | ✅ | ✅ |
+| Static Inventory (YAML, EDN, INI, inline) | ✅ | ✅ |
+| Dynamic Inventory (Executable scripts) | ✅ | ✅ |
 | SSH remote execution | ✅ | ✅ |
+| Parallel host execution (`forks`) | ✅ | ✅ |
 | Conditional execution (`when`) | ✅ | ✅ |
 | Loops (`loop`, `with_items`, `items`) | ✅ | ✅ |
 | Variable `register` | ✅ | ✅ |
+| Error handling (`block`, `rescue`, `always`) | ✅ | ✅ |
+| Event triggers (`handlers`, `notify`) | ✅ | ✅ |
+| Task retry loops (`retry`, `until`, `delay`) | ✅ | ✅ |
 | `include_tasks` (local, dir, git URL) | ✅ | ✅ |
+| Role Package Manager (`npkm roles install`) | ✅ | ✅ |
+| Vault (encrypted secrets & runtime decryption) | ✅ | ✅ |
 | Package management | ✅ `package` | ✅ |
 | Service management | ✅ `service`, `systemd` | ✅ |
 | User management | ✅ `user` | ✅ |
@@ -21,40 +26,14 @@
 | HTTP file download | ✅ `get_url` | ✅ |
 | Git clone/pull | ✅ `git` | ✅ |
 | Archive/zip | ✅ `archive`, `unzip` | ✅ |
+| Dry-run mode (`--dry-run`, `--check`) | ✅ | ✅ |
+| File changes mode (`--diff`) | ✅ | ✅ |
+| Idempotent state reporting (`ok`, `changed`) | ✅ | ✅ |
+| `become` (sudo escalation) | ✅ | ✅ |
 | `--doc` Mermaid flow generation | ✅ 🔥 **UNIQUE** | ❌ |
 | Label/name filtering (`--labels`, `--names`) | ✅ | ❌ tags only |
-| EDN format support | ✅ 🔥 **UNIQUE** | ❌ |
+| EDN format support (Tasks, Vars, Inventory) | ✅ 🔥 **UNIQUE** | ❌ |
+| Native `coni:` task module (inline scripts) | ✅ 🔥 **UNIQUE** | ❌ |
 | Native binary (no Python/runtime) | ✅ 🔥 **UNIQUE** | ❌ |
 | Persistent run logs in `~/.npkm/` | ✅ | ❌ |
-| `become` (sudo escalation) | ✅ | ✅ |
 | Cross-platform (macOS/Linux/Windows) | ✅ | Partial |
-
----
-
-### ❌ What Ansible Has That You Don't
-These are the real gaps, in priority order:
-
-| Gap | Impact | Effort |
-|---|---|---|
-| **Parallel host execution** (`forks`) | ✅ Done | Medium |
-| **Handlers + `notify`** | ✅ Done | Low |
-| **`block` / `rescue` / `always`** | ✅ Done | Medium |
-| **`retry` / `until`** | ✅ Done | Low |
-| **Vault (encrypted secrets)** | 🟡 Medium — secure credential storage | Medium |
-| **`check_mode` (dry-run)** | ✅ Done | Low |
-| **Idempotent state reporting** | ✅ Done — via `changed_when` | Low |
-| **Dynamic inventory** | 🟠 Nice to have | Medium |
-
----
-
-## 2. Best Plan of Action
-
-We can structure the upcoming work into sprints to rapidly close the core gaps and emphasize NPKM's unique strengths over Ansible.
-
-| Phase / Sprint | Goal | Sub-Tasks |
-|---|---|---|
-| ✅ **Sprint 1: Core Reliability** | Close basic operational gaps | <ul><li>[x] Implement `--dry-run` / `--check` mode</li><li>[x] Implement `retry: 3` and `delay: 5` (until success)</li><li>[x] Add support for `ok`, `changed`, and `skipped` states per task</li><li>[x] Windows compatibility in demo playbooks</li></ul> |
-| ✅ **Sprint 2: Flow Control** | Advanced playbook structure | <ul><li>[x] Implement `handlers` and `notify`</li><li>[x] Implement `block`, `rescue`, `always` for error boundaries</li></ul> |
-| ✅ **Sprint 3: The Multi-Node Killer Feature** | True parallel execution | <ul><li>[x] Refactor SSH loop to use goroutines (channels) for concurrent host execution</li><li>[x] Add `forks: 5` playbook parameter</li><li>[x] Implement `parallel: true` task groups</li></ul> |
-| ✅ **Sprint 4: Ecosystem & Uniqueness** | Lean into Coni/EDN | <ul><li>[x] Create native `coni:` task module (inline scripts inside playbooks)</li><li>[x] Build `npkm-galaxy` style hub (git repo convention)</li><li>[x] Add `--diff` mode for showing file changes</li></ul> |
-| ✅ **Sprint 5: Enterprise Readiness** | Vault & Dynamic Targets | <ul><li>[x] Implement `npkm-vault` for encrypted credential storage and decryption at runtime</li><li>[x] Support Dynamic Inventory scripts (executable files returning JSON/EDN)</li></ul> |
