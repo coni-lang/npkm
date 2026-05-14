@@ -16,6 +16,16 @@
 (def target-labels (atom []))
 (def target-names (atom []))
 
+;; --- Global Execution Stats (for --report) ---
+(def stats-ok (atom 0))
+(def stats-changed (atom 0))
+(def stats-failed (atom 0))
+(def stats-skipped (atom 0))
+(def stats-tests-pass (atom 0))
+(def stats-tests-fail (atom 0))
+(def stats-start-ms (atom 0))
+(def stats-task-log (atom []))
+
 (defn strip-colors [txt]
   (let [t1 (str/replace txt "\033[31m" "")
         t2 (str/replace t1 "\033[32m" "")
@@ -533,6 +543,36 @@
           res (try (eval-string code) (catch e (throw e)))]
       (str res))))
 
+(defrecord SetFactTask [spec]
+  PlaybookTask
+  (execute [this]
+    ;; set_fact injects variables; handled specially in run-task
+    ;; execute just returns the spec map for run-task to merge into vars
+    "__set_fact__"))
+
+(defrecord TestTask [spec]
+  PlaybookTask
+  (execute [this]
+    (let [s (:spec this)
+          cmd (if (:cmd s) (:cmd s) nil)
+          expect (if (:expect s) (str (:expect s)) nil)
+          contains-str (if (:contains s) (str (:contains s)) nil)
+          conn (:__connection__ s)
+          res (if cmd
+                (if conn
+                  (sys-ssh-exec (assoc conn :debug true) (str "sh -c '" (str/replace (str cmd) "'" "'\"'\"'") "'"))
+                  (shell/sh (str cmd)))
+                {:code 0 :stdout "" :stderr ""})
+          actual (str/trim (:stdout res))
+          exit-ok (= (:code res) 0)]
+      (if (not exit-ok)
+        (throw (str "TEST FAILED [exit " (:code res) "]: " (:stderr res))))
+      (if (and expect (not= actual expect))
+        (throw (str "TEST FAILED: expected '" expect "' got '" actual "'")))
+      (if (and contains-str (not (str/includes? actual contains-str)))
+        (throw (str "TEST FAILED: expected output to contain '" contains-str "' but got '" actual "'")))
+      (str "TEST PASSED" (if actual (str ": " actual) "")))))
+
 (defrecord TemplateTask [spec]
   PlaybookTask
   (execute [this]
@@ -646,7 +686,9 @@
    :template TemplateTask
    :coni ConiTask
    :path PathTask
-   :powershell PowershellTask})
+   :powershell PowershellTask
+   :set_fact SetFactTask
+   :test TestTask})
 
 (def playbook-task-keys
   (keys playbook-task-registry))
@@ -1002,167 +1044,180 @@ v-val v-clean
           (println "  warning: unknown or missing module type")
           (println "\033[33m  warning: unknown or missing module type\033[0m"))
         (if (is-bw)
-          (println "  changed\n")
-          (println "\033[32m  changed\033[0m\n"))
+          (println "  ok\n")
+          (println "\033[32m  ok\033[0m\n"))
         {:vars runtime-vars :output ""}))))
 
 (defn run-task [raw-task runtime-vars]
-  ;; --- include_tasks: load sub-tasks from a file, directory, or git repo ---
-  (let [include-src (if (:include_tasks raw-task) (:include_tasks raw-task)
-                      (get raw-task "include_tasks"))]
-    (if include-src
-      (let [interp-src (walk-interp include-src runtime-vars)
-            when-clause (if (:when raw-task) (:when raw-task) (get raw-task "when"))
-            should-run (eval-when when-clause runtime-vars)
-            skip-labels? (if (empty? @target-labels) false
-                           (if (nil? (:labels raw-task)) false
-                             (let [task-labels (:labels raw-task)
-                                   task-labels-vec (if (vector? task-labels) task-labels [task-labels])]
-                               (not (some (fn [l] (some (fn [tl] (= l tl)) @target-labels)) task-labels-vec)))))
-            skip-names? (if (empty? @target-names) false
-                          (if (nil? (:name raw-task)) false
-                            (let [task-name (:name raw-task)]
-                              (not (some (fn [tn] (= task-name tn)) @target-names)))))
-            skip-task? (or skip-labels? skip-names?)
-            should-run (and should-run (not skip-task?))]
+  ;; --- set_fact: merge new vars directly into runtime-vars ---
+  (let [sf-raw (if (:set_fact raw-task) (:set_fact raw-task) (get raw-task "set_fact"))]
+    (if (and sf-raw (map? sf-raw))
+      (let [task-name (if (:name raw-task) (:name raw-task) "set_fact")]
         (if (is-bw)
-          (println "TASK [" (:name raw-task) "]")
-          (println "\033[36mTASK [" (:name raw-task) "]\033[0m"))
-        (if (not should-run)
-          (do
-            (if skip-task?
-              (if (is-bw)
-                (println "  skipping: label or name filter not met\n")
-                (println "\033[36m  skipping: label or name filter not met\033[0m\n"))
-              (if (is-bw)
-                (println "  skipping: condition not met\n")
-                (println "\033[36m  skipping: condition not met\033[0m\n")))
-            runtime-vars)
-          (do
-            (if (is-bw)
-              (println (str "  including tasks from: " interp-src "\n"))
-              (println (str "\033[32m  including tasks from: " interp-src "\033[0m\n")))
-            (let [included-data (load-included-tasks interp-src)
-                  included-tasks (:tasks included-data)
-                  defaults-vars (:defaults included-data)
-                  task-vars (if (:vars raw-task) (:vars raw-task) {})
-                  merged-vars (merge runtime-vars defaults-vars task-vars)]
-              (loop [rem included-tasks
-                     curr-vars merged-vars]
-                (if (empty? rem)
-                  curr-vars
-                  (recur (rest rem) (run-task (first rem) curr-vars))))))))
-      ;; --- block processing ---
-      (let [block-tasks (if (:block raw-task) (:block raw-task) (get raw-task "block"))]
-        (if block-tasks
-          (let [when-clause (if (:when raw-task) (:when raw-task) (get raw-task "when"))
-                should-run (eval-when when-clause runtime-vars)]
-            (if should-run
-              (let [rescue-tasks (if (:rescue raw-task) (:rescue raw-task) (get raw-task "rescue"))
-                    always-tasks (if (:always raw-task) (:always raw-task) (get raw-task "always"))]
-                (let [vars-after-block
-                      (try
-                        (loop [rem block-tasks curr-vars runtime-vars]
-                          (if (empty? rem)
-                            curr-vars
-                            (recur (rest rem) (run-task (first rem) curr-vars))))
-                        (catch e
-                          (if rescue-tasks
-                            (do
-                              (if (is-bw) (println "  [rescue] block failed, running rescue tasks...") (println "\033[33m  [rescue] block failed, running rescue tasks...\033[0m"))
-                              (loop [rem rescue-tasks curr-vars runtime-vars]
-                                (if (empty? rem)
-                                  curr-vars
-                                  (recur (rest rem) (run-task (first rem) curr-vars)))))
-                            (throw e))))]
-                  (if always-tasks
-                    (do
-                      (if (is-bw) (println "  [always] running always tasks...") (println "\033[36m  [always] running always tasks...\033[0m"))
-                      (loop [rem always-tasks curr-vars vars-after-block]
-                        (if (empty? rem)
-                          curr-vars
-                          (recur (rest rem) (run-task (first rem) curr-vars)))))
-                    vars-after-block)))
-              runtime-vars))
-          ;; --- normal task processing ---
-          (let [interp-raw-task (walk-interp raw-task runtime-vars)
-                match (get-task-match interp-raw-task)
-                mod-args (if match (second match) {})
-                when-clause (if (:when interp-raw-task) (:when interp-raw-task)
-                              (if (get interp-raw-task "when") (get interp-raw-task "when")
-                                (if (:when mod-args) (:when mod-args)
-                                  (get mod-args "when"))))
+          (println "TASK [" task-name "]")
+          (println "\033[36mTASK [" task-name "]\033[0m"))
+        (let [new-vars (loop [ks (keys sf-raw) acc runtime-vars]
+                         (if (empty? ks) acc
+                           (let [k (first ks)
+                                 v (walk-interp (get sf-raw k) runtime-vars)]
+                             (recur (rest ks) (assoc acc (keyword k) v)))))]
+          (if (is-bw) (println "  ok (set_fact)\n") (println "\033[32m  ok (set_fact)\033[0m\n"))
+          (swap! stats-ok inc)
+          (swap! stats-task-log conj {:name task-name :status "ok" :module "set_fact"})
+          new-vars))
+      ;; --- include_tasks ---
+      (let [include-src (if (:include_tasks raw-task) (:include_tasks raw-task)
+                          (get raw-task "include_tasks"))]
+        (if include-src
+          (let [interp-src (walk-interp include-src runtime-vars)
+                when-clause (if (:when raw-task) (:when raw-task) (get raw-task "when"))
                 should-run (eval-when when-clause runtime-vars)
                 skip-labels? (if (empty? @target-labels) false
-                               (let [task-labels (if (:labels interp-raw-task) (:labels interp-raw-task) [])
-                                     task-labels-vec (if (vector? task-labels) task-labels [task-labels])]
-                                 (not (some (fn [l] (some (fn [tl] (= l tl)) @target-labels)) task-labels-vec))))
+                               (if (nil? (:labels raw-task)) false
+                                 (let [task-labels (:labels raw-task)
+                                       task-labels-vec (if (vector? task-labels) task-labels [task-labels])]
+                                   (not (some (fn [l] (some (fn [tl] (= l tl)) @target-labels)) task-labels-vec)))))
                 skip-names? (if (empty? @target-names) false
-                              (let [task-name (:name interp-raw-task)]
-                                (not (some (fn [tn] (= task-name tn)) @target-names))))
+                              (if (nil? (:name raw-task)) false
+                                (not (some (fn [tn] (= (:name raw-task) tn)) @target-names))))
                 skip-task? (or skip-labels? skip-names?)
-                should-run (and should-run (not skip-task?))
-                ;; Check for loop items at root level or nested inside the module map
-                items (let [loop-val (if (:loop interp-raw-task) (:loop interp-raw-task)
-                                      (if (:items interp-raw-task) (:items interp-raw-task)
-                                      (if (:with_items interp-raw-task) (:with_items interp-raw-task)
-                                      (if (:loop mod-args) (:loop mod-args)
-                                      (if (:items mod-args) (:items mod-args)
-                                      (:with_items mod-args))))))]
-                        (if loop-val
-                          ;; If loop is a string referencing a runtime var, resolve it
-                          (if (string? loop-val)
-                            (let [resolved (resolve-var-path runtime-vars loop-val)]
-                              (if (vector? resolved) resolved
-                                  (if resolved [resolved] [])))
-                            (if (vector? loop-val) loop-val []))
-                          nil))]
+                should-run (and should-run (not skip-task?))]
             (if (is-bw)
-              (println "TASK [" (:name interp-raw-task) "]")
-              (println "\033[36mTASK [" (:name interp-raw-task) "]\033[0m"))
+              (println "TASK [" (:name raw-task) "]")
+              (println "\033[36mTASK [" (:name raw-task) "]\033[0m"))
             (if (not should-run)
               (do
-                (if skip-task?
-                  (if (is-bw)
-                    (println "  skipping: label or name filter not met\n")
-                    (println "\033[36m  skipping: label or name filter not met\033[0m\n"))
-                  (if (is-bw)
-                    (println "  skipping: condition not met\n")
-                    (println "\033[36m  skipping: condition not met\033[0m\n")))
+                (if (is-bw) (println "  skipping: condition not met\n") (println "\033[36m  skipping: condition not met\033[0m\n"))
+                (swap! stats-skipped inc)
                 runtime-vars)
-              (if items
-                ;; Loop mode: execute task once per item
-                (let [reg-key (if (:register interp-raw-task) (:register interp-raw-task) (:register mod-args))]
-                  (loop [rem items
-                         curr-vars runtime-vars
-                         outputs []]
-                    (if (empty? rem)
-                      (if reg-key
-                        (assoc curr-vars reg-key outputs)
-                        curr-vars)
-                      (let [item (first rem)
-                            item-task (replace-item-placeholders interp-raw-task item)
-                            result (run-single-task item-task curr-vars)
+              (do
+                (if (is-bw)
+                  (println (str "  including tasks from: " interp-src "\n"))
+                  (println (str "\033[32m  including tasks from: " interp-src "\033[0m\n")))
+                (let [included-data (load-included-tasks interp-src)
+                      included-tasks (:tasks included-data)
+                      defaults-vars (:defaults included-data)
+                      task-vars (if (:vars raw-task) (:vars raw-task) {})
+                      merged-vars (merge runtime-vars defaults-vars task-vars)]
+                  (loop [rem included-tasks curr-vars merged-vars]
+                    (if (empty? rem) curr-vars
+                      (recur (rest rem) (run-task (first rem) curr-vars))))))))
+          ;; --- block processing ---
+          (let [block-tasks (if (:block raw-task) (:block raw-task) (get raw-task "block"))]
+            (if block-tasks
+              (let [when-clause (if (:when raw-task) (:when raw-task) (get raw-task "when"))
+                    should-run (eval-when when-clause runtime-vars)]
+                (if should-run
+                  (let [rescue-tasks (if (:rescue raw-task) (:rescue raw-task) (get raw-task "rescue"))
+                        always-tasks (if (:always raw-task) (:always raw-task) (get raw-task "always"))]
+                    (let [vars-after-block
+                          (try
+                            (loop [rem block-tasks curr-vars runtime-vars]
+                              (if (empty? rem) curr-vars
+                                (recur (rest rem) (run-task (first rem) curr-vars))))
+                            (catch e
+                              (if rescue-tasks
+                                (do
+                                  (if (is-bw) (println "  [rescue] block failed, running rescue tasks...") (println "\033[33m  [rescue] block failed, running rescue tasks...\033[0m"))
+                                  (loop [rem rescue-tasks curr-vars runtime-vars]
+                                    (if (empty? rem) curr-vars
+                                      (recur (rest rem) (run-task (first rem) curr-vars)))))
+                                (throw e))))]
+                      (if always-tasks
+                        (do
+                          (if (is-bw) (println "  [always] running always tasks...") (println "\033[36m  [always] running always tasks...\033[0m"))
+                          (loop [rem always-tasks curr-vars vars-after-block]
+                            (if (empty? rem) curr-vars
+                              (recur (rest rem) (run-task (first rem) curr-vars)))))
+                        vars-after-block)))
+                  runtime-vars))
+              ;; --- normal task processing ---
+              (let [interp-raw-task (walk-interp raw-task runtime-vars)
+                    match (get-task-match interp-raw-task)
+                    mod-args (if match (second match) {})
+                    when-clause (if (:when interp-raw-task) (:when interp-raw-task)
+                                  (if (get interp-raw-task "when") (get interp-raw-task "when")
+                                    (if (:when mod-args) (:when mod-args) (get mod-args "when"))))
+                    should-run (eval-when when-clause runtime-vars)
+                    skip-labels? (if (empty? @target-labels) false
+                                   (let [task-labels (if (:labels interp-raw-task) (:labels interp-raw-task) [])
+                                         task-labels-vec (if (vector? task-labels) task-labels [task-labels])]
+                                     (not (some (fn [l] (some (fn [tl] (= l tl)) @target-labels)) task-labels-vec))))
+                    skip-names? (if (empty? @target-names) false
+                                  (not (some (fn [tn] (= (:name interp-raw-task) tn)) @target-names)))
+                    skip-task? (or skip-labels? skip-names?)
+                    should-run (and should-run (not skip-task?))
+                    items (let [loop-val (if (:loop interp-raw-task) (:loop interp-raw-task)
+                                          (if (:items interp-raw-task) (:items interp-raw-task)
+                                          (if (:with_items interp-raw-task) (:with_items interp-raw-task)
+                                          (if (:loop mod-args) (:loop mod-args)
+                                          (if (:items mod-args) (:items mod-args)
+                                          (:with_items mod-args))))))]
+                            (if loop-val
+                              (if (string? loop-val)
+                                (let [resolved (resolve-var-path runtime-vars loop-val)]
+                                  (if (vector? resolved) resolved (if resolved [resolved] [])))
+                                (if (vector? loop-val) loop-val [])) nil))
+                    is-step (:__step__ runtime-vars)
+                    task-name-str (if (:name interp-raw-task) (str (:name interp-raw-task)) "unnamed")]
+                (if (is-bw)
+                  (println "TASK [" task-name-str "]")
+                  (println "\033[36mTASK [" task-name-str "]\033[0m"))
+                ;; --step interactive prompt
+                (let [step-skip
+                      (if (and is-step should-run)
+                        (do
+                          (if (is-bw)
+                            (original-print (str "Execute [" task-name-str "]? (y/n/q) > "))
+                            (original-print (str "\033[33mExecute [" task-name-str "]? (y/n/q) > \033[0m")))
+                          (let [ans (str/trim (:stdout (shell/sh "bash -c 'read -r ans </dev/tty && echo $ans'")))]
+                            (if (= ans "q") (do (println "Aborted.") (sys-exit 0)))
+                            (not= ans "y")))
+                        false)]
+                  (if (or (not should-run) step-skip)
+                    (do
+                      (if step-skip
+                        (if (is-bw) (println "  skipped (step mode)\n") (println "\033[36m  skipped (step mode)\033[0m\n"))
+                        (if skip-task?
+                          (if (is-bw) (println "  skipping: label or name filter not met\n") (println "\033[36m  skipping: label or name filter not met\033[0m\n"))
+                          (if (is-bw) (println "  skipping: condition not met\n") (println "\033[36m  skipping: condition not met\033[0m\n"))))
+                      (swap! stats-skipped inc)
+                      (swap! stats-task-log conj {:name task-name-str :status "skipped" :module (if match (str (first match)) "unknown")})
+                      runtime-vars)
+                    (if items
+                      ;; Loop mode
+                      (let [reg-key (if (:register interp-raw-task) (:register interp-raw-task) (:register mod-args))]
+                        (loop [rem items curr-vars runtime-vars outputs []]
+                          (if (empty? rem)
+                            (if reg-key (assoc curr-vars reg-key outputs) curr-vars)
+                            (let [item (first rem)
+                                  item-task (replace-item-placeholders interp-raw-task item)
+                                  result (run-single-task item-task curr-vars)
+                                  changed (:changed result)
+                                  notified (if (:notify interp-raw-task) (:notify interp-raw-task) (if (:notify mod-args) (:notify mod-args) nil))
+                                  notified-list (if notified (if (vector? notified) notified [notified]) [])
+                                  curr-notified (if (:__notified_handlers__ (:vars result)) (:__notified_handlers__ (:vars result)) [])
+                                  new-notified (if (and changed (> (count notified-list) 0))
+                                                 (loop [r notified-list acc curr-notified]
+                                                   (if (empty? r) acc (recur (rest r) (conj acc (first r))))) curr-notified)]
+                              (if changed (swap! stats-changed inc) (swap! stats-ok inc))
+                              (swap! stats-task-log conj {:name task-name-str :status (if changed "changed" "ok") :module (if match (str (first match)) "unknown")})
+                              (recur (rest rem) (assoc (:vars result) :__notified_handlers__ new-notified) (conj outputs (:output result)))))))
+                      ;; Normal single execution
+                      (let [result (run-single-task interp-raw-task runtime-vars)
                             changed (:changed result)
                             notified (if (:notify interp-raw-task) (:notify interp-raw-task) (if (:notify mod-args) (:notify mod-args) nil))
                             notified-list (if notified (if (vector? notified) notified [notified]) [])
                             curr-notified (if (:__notified_handlers__ (:vars result)) (:__notified_handlers__ (:vars result)) [])
                             new-notified (if (and changed (> (count notified-list) 0))
                                            (loop [r notified-list acc curr-notified]
-                                             (if (empty? r) acc (recur (rest r) (conj acc (first r)))))
-                                           curr-notified)]
-                        (recur (rest rem) (assoc (:vars result) :__notified_handlers__ new-notified) (conj outputs (:output result)))))))
-                ;; Normal mode: single execution
-                (let [result (run-single-task interp-raw-task runtime-vars)
-                      changed (:changed result)
-                      notified (if (:notify interp-raw-task) (:notify interp-raw-task) (if (:notify mod-args) (:notify mod-args) nil))
-                      notified-list (if notified (if (vector? notified) notified [notified]) [])
-                      curr-notified (if (:__notified_handlers__ (:vars result)) (:__notified_handlers__ (:vars result)) [])
-                      new-notified (if (and changed (> (count notified-list) 0))
-                                     (loop [r notified-list acc curr-notified]
-                                       (if (empty? r) acc (recur (rest r) (conj acc (first r)))))
-                                     curr-notified)]
-                  (assoc (:vars result) :__notified_handlers__ new-notified))))))))))
+                                             (if (empty? r) acc (recur (rest r) (conj acc (first r))))) curr-notified)
+                            mod-name (if match (str (first match)) "unknown")]
+                        (if changed (swap! stats-changed inc) (swap! stats-ok inc))
+                        (swap! stats-task-log conj {:name task-name-str :status (if changed "changed" "ok") :module mod-name})
+                        (assoc (:vars result) :__notified_handlers__ new-notified)))))))))))))
+
+
 (defn clean-mermaid-text [txt]
   (str/replace (str/replace (str txt) "\"" "'") "\n" " "))
 
@@ -1333,7 +1388,7 @@ v-val v-clean
                     (recur (rest rem-handlers))))))
             nil))
         nil))))
-(defn execute-playbook [parsed-content inventory global-vars is-bw yaml-content is-debug is-dry-run is-diff]
+(defn execute-playbook [parsed-content inventory global-vars is-bw yaml-content is-debug is-dry-run is-diff is-step]
   (let [plays (if (and (vector? parsed-content) (map? (first parsed-content)) (:tasks (first parsed-content)))
                 parsed-content
                 (let [play-hosts (if yaml-content (extract-hosts yaml-content) (if (map? parsed-content) (:hosts parsed-content "localhost") "localhost"))]
@@ -1348,7 +1403,7 @@ v-val v-clean
               target-group (if (:hosts play) (:hosts play) "localhost")
               p-vars (if (:vars play) (:vars play) {})
               forks (if (:forks play) (:forks play) (if (get play "forks") (get play "forks") 1))
-              base-vars (merge play-vars p-vars {:__debug__ is-debug :__dry_run__ is-dry-run :__diff__ is-diff})
+              base-vars (merge play-vars p-vars {:__debug__ is-debug :__dry_run__ is-dry-run :__diff__ is-diff :__step__ is-step})
               tasks (:tasks play)
               target-hosts (if (and inventory (> (count (keys inventory)) 0)) (get-hosts inventory target-group) (if (= target-group "localhost") ["localhost"] [target-group]))]
           (if (and (> forks 1) (> (count target-hosts) 1))
@@ -1379,6 +1434,243 @@ v-val v-clean
                   (recur (rest rem-hosts))))))
           (recur (rest rem-plays) play-vars))))))
 
+
+;; ============================================================
+;;  SPRINT 6 FEATURES
+;; ============================================================
+
+;; --- generate-report: produce JSON summary after execution ---
+(defn generate-report [playbook-file]
+  (let [duration-ms (- (int (str/trim (:stdout (shell/sh "date +%s%3N")))) @stats-start-ms)
+        duration-s (/ duration-ms 1000)
+        total (+ @stats-ok @stats-changed @stats-failed @stats-skipped)
+        report-dir (str (os/get-home-dir) "/.npkm/reports")
+        date-str (os/get-date)
+        json-path (str report-dir "/" date-str ".json")
+        html-path (str report-dir "/" date-str ".html")]
+    (io/make-dir report-dir)
+    ;; JSON
+    (let [task-entries (loop [rem @stats-task-log acc ""]
+                         (if (empty? rem) acc
+                           (let [t (first rem)
+                                 entry (str "    {\"name\":\"" (:name t) "\",\"status\":\"" (:status t) "\",\"module\":\"" (:module t) "\"}")]
+                             (recur (rest rem) (if (= acc "") entry (str acc ",\n" entry))))))
+          json (str "{\n"
+                    "  \"playbook\": \"" playbook-file "\",\n"
+                    "  \"date\": \"" date-str "\",\n"
+                    "  \"duration_ms\": " duration-ms ",\n"
+                    "  \"summary\": {\n"
+                    "    \"ok\": " @stats-ok ",\n"
+                    "    \"changed\": " @stats-changed ",\n"
+                    "    \"failed\": " @stats-failed ",\n"
+                    "    \"skipped\": " @stats-skipped ",\n"
+                    "    \"tests_pass\": " @stats-tests-pass ",\n"
+                    "    \"tests_fail\": " @stats-tests-fail "\n"
+                    "  },\n"
+                    "  \"tasks\": [\n" task-entries "\n  ]\n}")]
+      (io/write-file json-path json))
+    ;; HTML
+    (let [row-fn (fn [t]
+                   (let [color (if (= (:status t) "ok") "#2ecc71"
+                               (if (= (:status t) "changed") "#f39c12"
+                               (if (= (:status t) "failed") "#e74c3c" "#95a5a6")))]
+                     (str "<tr><td>" (:name t) "</td><td style='color:" color "'>" (:status t) "</td><td>" (:module t) "</td></tr>\n")))
+          rows (loop [rem @stats-task-log acc ""]
+                 (if (empty? rem) acc
+                   (recur (rest rem) (str acc (row-fn (first rem))))))
+          ok-pct (if (> total 0) (int (* 100 (/ (+ @stats-ok @stats-changed) total))) 0)
+          html (str "<!DOCTYPE html><html><head><meta charset='utf-8'><title>NPKM Report</title>"
+                    "<style>body{font-family:system-ui,sans-serif;background:#0d1117;color:#c9d1d9;margin:0;padding:2rem}"
+                    "h1{color:#58a6ff}table{width:100%;border-collapse:collapse;margin-top:1rem}"
+                    "th{background:#161b22;padding:.5rem 1rem;text-align:left;color:#8b949e}"
+                    "td{padding:.4rem 1rem;border-bottom:1px solid #21262d}"
+                    ".stat{display:inline-block;margin:.5rem 1rem;padding:.5rem 1.5rem;border-radius:8px;background:#161b22}"
+                    ".ok{color:#2ecc71}.changed{color:#f39c12}.failed{color:#e74c3c}.skipped{color:#95a5a6}"
+                    ".bar-bg{background:#21262d;border-radius:99px;height:12px;margin:.5rem 0}"
+                    ".bar{background:linear-gradient(90deg,#2ecc71,#58a6ff);height:12px;border-radius:99px}"
+                    "</style></head><body>"
+                    "<h1>⬡ NPKM Execution Report</h1>"
+                    "<p><b>Playbook:</b> " playbook-file " &nbsp;|&nbsp; <b>Date:</b> " date-str " &nbsp;|&nbsp; <b>Duration:</b> " duration-s "s</p>"
+                    "<div class='bar-bg'><div class='bar' style='width:" ok-pct "%'></div></div>"
+                    "<div>"
+                    "<span class='stat'><span class='ok'>✓ OK: " @stats-ok "</span></span>"
+                    "<span class='stat'><span class='changed'>~ Changed: " @stats-changed "</span></span>"
+                    "<span class='stat'><span class='failed'>✗ Failed: " @stats-failed "</span></span>"
+                    "<span class='stat'><span class='skipped'>⊘ Skipped: " @stats-skipped "</span></span>"
+                    (if (> (+ @stats-tests-pass @stats-tests-fail) 0)
+                      (str "<span class='stat'>🧪 Tests: <span class='ok'>" @stats-tests-pass " pass</span> / <span class='failed'>" @stats-tests-fail " fail</span></span>") "")
+                    "</div>"
+                    "<table><thead><tr><th>Task</th><th>Status</th><th>Module</th></tr></thead><tbody>"
+                    rows
+                    "</tbody></table></body></html>")]
+      (io/write-file html-path html))
+    (if (is-bw)
+      (do
+        (println (str "\n--- NPKM Run Report ---"))
+        (println (str "  ok=" @stats-ok " changed=" @stats-changed " failed=" @stats-failed " skipped=" @stats-skipped " duration=" duration-s "s"))
+        (println (str "  JSON: " json-path))
+        (println (str "  HTML: " html-path)))
+      (do
+        (println (str "\n\033[34m--- NPKM Run Report ---\033[0m"))
+        (println (str "  \033[32mok=" @stats-ok "\033[0m \033[33mchanged=" @stats-changed "\033[0m \033[31mfailed=" @stats-failed "\033[0m \033[36mskipped=" @stats-skipped "\033[0m \033[35mduration=" duration-s "s\033[0m"))
+        (println (str "  \033[34mJSON: " json-path "\033[0m"))
+        (println (str "  \033[34mHTML: " html-path "\033[0m"))))))
+
+;; --- npkm-init: scaffold a new project ---
+(defn npkm-init [project-dir]
+  (let [dir (if (= project-dir ".") "." project-dir)]
+    (io/make-dir dir)
+    (io/make-dir (str dir "/roles"))
+    (io/make-dir (str dir "/group_vars"))
+    (io/make-dir (str dir "/tasks"))
+    (io/write-file (str dir "/inventory.edn")
+      "{:all {:hosts {:localhost {}}}}\n")
+    (io/write-file (str dir "/group_vars/all.edn")
+      "{:app_name \"myapp\"\n :deploy_dir \"/opt/myapp\"}\n")
+    (io/write-file (str dir "/main.edn")
+      "{:name \"My Playbook\"\n :hosts \"all\"\n :vars {:greeting \"Hello from NPKM!\"}\n :tasks\n [{:name \"Say hello\"\n   :debug {:msg \"{{ greeting }}\"}}\n  {:name \"Ensure deploy dir exists\"\n   :file {:path \"{{ deploy_dir }}\" :state \"directory\"}}]}\n")
+    (io/write-file (str dir "/tasks/setup.edn")
+      "[{:name \"Setup task\"\n  :debug {:msg \"Running setup...\"}}]\n")
+    (println (str "\033[32m✓ NPKM project initialized at: " dir "\033[0m"))
+    (println "  \033[36mmain.edn\033[0m          - Main playbook")
+    (println "  \033[36minventory.edn\033[0m     - Host inventory")
+    (println "  \033[36mgroup_vars/all.edn\033[0m - Shared variables")
+    (println "  \033[36mtasks/setup.edn\033[0m   - Example task file")
+    (println "  \033[36mroles/\033[0m            - Role directory")
+    (println "\nRun with: npkm -i inventory.edn main.edn")))
+
+;; --- npkm-lint: static analysis of a playbook ---
+(defn lint-tasks [tasks playbook-file depth]
+  (let [required-module-fields
+        {:shell [:cmd] :command [:cmd] :file [:path :state] :copy [:src :dest]
+         :get_url [:url :dest] :lineinfile [:path :line] :replace [:path :regexp :replace]
+         :debug [:msg] :git [:repo :dest] :remove [:path] :fail [:msg]
+         :template [:src :dest] :unzip [:src :dest] :move [:src :dest]}]
+    (loop [rem tasks warnings []]
+      (if (empty? rem)
+        warnings
+        (let [t (first rem)
+              block-tasks (if (:block t) (:block t) (get t "block"))
+              rescue-tasks (if (:rescue t) (:rescue t) (get t "rescue"))
+              always-tasks (if (:always t) (:always t) (get t "always"))
+              include-src (if (:include_tasks t) (:include_tasks t) (get t "include_tasks"))
+              new-warns
+              (if block-tasks
+                (let [b-warns (lint-tasks block-tasks playbook-file (+ depth 1))
+                      r-warns (if rescue-tasks (lint-tasks rescue-tasks playbook-file (+ depth 1)) [])
+                      a-warns (if always-tasks (lint-tasks always-tasks playbook-file (+ depth 1)) [])]
+                  (concat b-warns r-warns a-warns))
+                (if include-src
+                  []
+                  (let [match (get-task-match t)
+                        module-key (if match (first match) nil)
+                        task-name (if (:name t) (:name t) nil)
+                        missing-name (if (not task-name) [(str "  WARN: Task at position missing :name field")] [])
+                        missing-module (if (not match) [(str "  WARN: Task '" (if task-name task-name "unnamed") "' has unknown or missing module")] [])
+                        field-warns (if (and match module-key)
+                                      (let [req-fields (get required-module-fields module-key)
+                                            mod-spec (if match (second match) {})]
+                                        (if req-fields
+                                          (loop [rem-fields req-fields fw []]
+                                            (if (empty? rem-fields) fw
+                                              (let [field (first rem-fields)
+                                                    present (or (get mod-spec field) (get mod-spec (str (name field))))]
+                                                (recur (rest rem-fields)
+                                                       (if present fw (conj fw (str "  WARN: Task '" (if task-name task-name "unnamed") "' missing required field: " field)))))))
+                                          [])) [])]
+                    (concat missing-name missing-module field-warns))))]
+          (recur (rest rem) (concat warnings new-warns)))))))
+
+(defn npkm-lint [playbook-file]
+  (if (not (io/exists? playbook-file))
+    (do (println (str "\033[31mError: " playbook-file " not found\033[0m")) (sys-exit 1)))
+  (println (str "\033[34m⬡ Linting: " playbook-file "\033[0m"))
+  (let [content (io/read-file playbook-file)
+        parsed-data (parse-playbook playbook-file content)
+        tasks (:tasks parsed-data)
+        plays (if (and (vector? tasks) (map? (first tasks)) (:tasks (first tasks)))
+                tasks
+                [{:name "Default Play" :tasks (if (map? tasks) (:tasks tasks) tasks)}])
+        total-warns (loop [rem-plays plays all-warns []]
+                      (if (empty? rem-plays) all-warns
+                        (let [play (first rem-plays)
+                              play-tasks (if (:tasks play) (:tasks play) [])
+                              play-warns (lint-tasks play-tasks playbook-file 0)]
+                          (recur (rest rem-plays) (concat all-warns play-warns)))))]
+    (if (empty? total-warns)
+      (println "\033[32m✓ No issues found.\033[0m")
+      (do
+        (loop [rem total-warns]
+          (if (empty? rem) nil
+            (do (println "\033[33m" (first rem) "\033[0m") (recur (rest rem)))))
+        (println (str "\n\033[33m" (count total-warns) " warning(s) found.\033[0m"))))))
+
+;; --- npkm run history: browse ~/.npkm/logs ---
+(defn npkm-run-history [sub-cmd]
+  (let [log-dir (str (os/get-home-dir) "/.npkm/logs")]
+    (if (= sub-cmd "last")
+      ;; Show content of most recent log
+      (let [files-res (shell/sh (str "ls -t " log-dir "/*.log 2>/dev/null | head -1"))
+            last-log (str/trim (:stdout files-res))]
+        (if (= last-log "")
+          (println "No logs found.")
+          (do
+            (println (str "\033[34m--- Last Run Log: " last-log " ---\033[0m"))
+            (println (io/read-file last-log)))))
+      (if (= sub-cmd "diff")
+        ;; Diff the two most recent logs
+        (let [files-res (shell/sh (str "ls -t " log-dir "/*.log 2>/dev/null | head -2"))
+              files (str/split (str/trim (:stdout files-res)) "\n")]
+          (if (< (count files) 2)
+            (println "Need at least 2 log files to diff.")
+            (do
+              (println (str "\033[34m--- Diff: " (second files) " vs " (first files) " ---\033[0m"))
+              (let [res (shell/sh (str "diff '" (second files) "' '" (first files) "' || true"))]
+                (println (:stdout res))))))
+        ;; Default: list all logs
+        (let [files-res (shell/sh (str "ls -lt " log-dir "/*.log 2>/dev/null"))
+              files-out (str/trim (:stdout files-res))]
+          (println (str "\033[34m⬡ NPKM Run History (" log-dir ")\033[0m"))
+          (if (= files-out "")
+            (println "  No logs found.")
+            (let [lines (str/split files-out "\n")]
+              (loop [rem lines idx 1]
+                (if (empty? rem) nil
+                  (do
+                    (println (str "  [" idx "] " (first rem)))
+                    (recur (rest rem) (+ idx 1)))))
+              (println "\nTip: npkm run history last   - show most recent log")
+              (println "     npkm run history diff   - diff last two runs"))))))))
+
+;; --- npkm watch: re-run playbook when files change ---
+(defn npkm-watch [playbook-file inv-file is-bw is-debug is-dry-run is-diff]
+  (let [inventory (if inv-file (parse-inventory inv-file) nil)
+        watch-targets (if inv-file [playbook-file inv-file] [playbook-file])
+        get-mtime (fn [f] (str/trim (:stdout (shell/sh (str "stat -f %m '" f "' 2>/dev/null || stat -c %Y '" f "' 2>/dev/null")))))]
+    (println (str "\033[34m⬡ NPKM Watch Mode — watching: " (str/join ", " watch-targets) "\033[0m"))
+    (println "  Press Ctrl+C to stop.\n")
+    (let [initial-mtimes (loop [rem watch-targets acc {}]
+                           (if (empty? rem) acc
+                             (recur (rest rem) (assoc acc (first rem) (get-mtime (first rem))))))]
+      (loop [mtimes initial-mtimes run-count 0]
+        (sleep 1000)
+        (let [new-mtimes (loop [rem watch-targets acc {}]
+                           (if (empty? rem) acc
+                             (recur (rest rem) (assoc acc (first rem) (get-mtime (first rem))))))
+              changed (some (fn [f] (not= (get mtimes f) (get new-mtimes f))) watch-targets)]
+          (if changed
+            (do
+              (println (str "\n\033[33m[watch] Change detected — re-running playbook... (run #" (+ run-count 1) ")\033[0m\n"))
+              (let [content (io/read-file playbook-file)
+                    parsed-data (parse-playbook playbook-file content)
+                    tasks (:tasks parsed-data)
+                    cfg (:cfg parsed-data)]
+                (try
+                  (execute-playbook tasks inventory cfg is-bw content is-debug is-dry-run is-diff)
+                  (catch e (println (str "\033[31mPlaybook error: " e "\033[0m")))))
+              (recur new-mtimes (+ run-count 1)))
+            (recur new-mtimes run-count)))))))
+
 (defn run []
   (let [args (cli/args)
         flags (filter (fn [x] (str/starts-with? x "-")) args)
@@ -1386,6 +1678,9 @@ v-val v-clean
         is-debug (some (fn [x] (or (= x "--verbose") (= x "--debug"))) flags)
         is-dry-run (some (fn [x] (or (= x "--dry-run") (= x "--check"))) flags)
         is-diff (some (fn [x] (= x "--diff")) flags)
+        is-report (some (fn [x] (= x "--report")) flags)
+        is-step (some (fn [x] (= x "--step")) flags)
+        _ (reset! stats-start-ms (int (str/trim (:stdout (shell/sh "date +%s%3N")))))
         inv-file (loop [i 0] (if (>= i (count args)) nil (if (= (nth args i) "-i") (nth args (+ i 1)) (recur (+ i 1)))))
         inventory (if inv-file (parse-inventory inv-file) nil)
         lbl-idx (loop [i 0] (if (>= i (count args)) -1 (if (= (nth args i) "--labels") i (recur (+ i 1)))))
@@ -1408,23 +1703,10 @@ v-val v-clean
       (do
         (println "Usage: npkm [options] <playbook.yml | directory | http(s)://... | git repo>\n")
         (println "Options:")
-        (println "  -v    prints version (compiled at date)")
-        (println "  -h    shows help and supported tasks")
-        (println "  --doc generates markdown and mermaid documentation for playbook and inventory")
+        (println "  -v             prints version (compiled at date)")
+        (println "  -h             shows help and supported tasks")
+        (println "  --doc          generates mermaid documentation for playbook and inventory")
         (println "  --dry-run, --check    simulate execution without making changes")
-        (println "  --diff                show differences in files being changed")
-        (println "  --labels   comma-separated labels to execute")
-        (println "  --names    comma-separated task names to execute")
-        (println "  -bw   disable color output")
-        (println "\nSupported Playbook Tasks:")
-        (println "  get_url:      Download a file from HTTP/HTTPS.")
-        (println "                { url: string, dest: string }")
-        (println "  copy:         Copy a file from local source to destination.")
-        (println "                { src: string, dest: string }")
-        (println "  lineinfile:   Ensure a particular line is in a file, or replace an existing line using a regular expression.")
-        (println "                { path: string, regexp?: string, line: string }")
-        (println "  command:      Execute a command without going through a shell.")
-        (println "                { cmd: string, cwd?: string }")
         (println "  shell:        Execute a command through the system shell.")
         (println "                { cmd: string, cwd?: string }")
         (println "  file:         Manage files, directories, and symlinks.")
@@ -1535,6 +1817,30 @@ v-val v-clean
                           (println "Decryption failed:" (:stderr res))))))
                   (println "Unknown vault action:" action)))))
           (sys-exit 0)))
+      ;; --- npkm init ---
+      (if (= (first pos-args-clean) "init")
+        (do
+          (npkm-init (if (> (count pos-args-clean) 1) (second pos-args-clean) "."))
+          (sys-exit 0)))
+      ;; --- npkm lint ---
+      (if (= (first pos-args-clean) "lint")
+        (do
+          (let [target (if (> (count pos-args-clean) 1) (second pos-args-clean) nil)]
+            (if (not target) (do (println "Usage: npkm lint <playbook>") (sys-exit 1)))
+            (npkm-lint target))
+          (sys-exit 0)))
+      ;; --- npkm run history ---
+      (if (and (= (first pos-args-clean) "run") (= (second pos-args-clean) "history"))
+        (do
+          (npkm-run-history (if (> (count pos-args-clean) 2) (nth pos-args-clean 2) nil))
+          (sys-exit 0)))
+      ;; --- npkm watch ---
+      (if (= (first pos-args-clean) "watch")
+        (do
+          (let [watch-target (if (> (count pos-args-clean) 1) (second pos-args-clean) nil)]
+            (if (not watch-target) (do (println "Usage: npkm watch <playbook>") (sys-exit 1)))
+            (npkm-watch watch-target inv-file is-bw is-debug is-dry-run is-diff))
+          (sys-exit 0)))
       (let [playbook-file (first pos-args-clean)
           is-git? (if playbook-file (or (str/ends-with? playbook-file ".git") (str/starts-with? playbook-file "git://") (str/starts-with? playbook-file "git@") (str/starts-with? playbook-file "ssh://git@")) false)
           is-doc? (some (fn [x] (= x "--doc")) flags)
@@ -1601,7 +1907,7 @@ v-val v-clean
                       parsed-data (parse-playbook dest content)
                       tasks (:tasks parsed-data)
                       cfg (:cfg parsed-data)]
-                  (execute-playbook tasks inventory cfg is-bw content is-debug is-dry-run is-diff))
+                  (execute-playbook tasks inventory cfg is-bw content is-debug is-dry-run is-diff false))
                 (do (if is-bw (println "Failed to download playbook") (println "\033[31mFailed to download playbook\033[0m")) (sys-exit 1))))
             (if (not (io/exists? playbook-file))
               (do
@@ -1611,7 +1917,8 @@ v-val v-clean
                         parsed-data (parse-playbook playbook-file content)
                         tasks (:tasks parsed-data)
                         cfg (:cfg parsed-data)]
-                    (execute-playbook tasks inventory cfg is-bw content is-debug is-dry-run is-diff)))))))))))
+                    (execute-playbook tasks inventory cfg is-bw content is-debug is-dry-run is-diff is-step)
+                    (if is-report (generate-report playbook-file))))))))))))
 
 )
 (if (not (some (fn [x] (= x "test")) (sys-os-args)))
