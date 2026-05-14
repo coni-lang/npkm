@@ -53,6 +53,7 @@
                 "npkm-roadmap.md"
                 "demo.yml"
                 "demo-flow.yml"
+                "demo-coni.yml"
                 "npkm-coni/test-playbook.edn"
                 "test-playbook.yml"
                 "npkm-coni/tests/test-loop.yml"
@@ -60,7 +61,7 @@
                 "npkm-intellij-plugin/build/distributions/npkm-intellij-plugin-1.0.0.zip"]}
 
   {:name "Package release zip"
-   :shell {:cmd "zip -r npkm-coni-release-{{ build_date }}.zip npkm-coni npkm-coni-linux npkm-coni.exe npkm-intellij-plugin-1.0.0.zip README.md npkm-roadmap.md demo.yml demo-flow.yml test-playbook.edn test-playbook.yml test-loop.yml install_ollama.yml"
+   :shell {:cmd "zip -r npkm-coni-release-{{ build_date }}.zip npkm-coni npkm-coni-linux npkm-coni.exe npkm-intellij-plugin-1.0.0.zip README.md npkm-roadmap.md demo.yml demo-flow.yml demo-coni.yml test-playbook.edn test-playbook.yml test-loop.yml install_ollama.yml"
            :cwd "dist"}}
 
   {:name "Deploy to samba share"

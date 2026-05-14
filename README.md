@@ -47,6 +47,7 @@ NPKM is a lightweight, declarative automation and provisioning tool (similar to 
 | `archive` | Native `zip` operations without shell dependencies |
 | `template` | Deploy templated files with mapped configuration properties |
 | `include_tasks` | Include & execute tasks from a local file, directory, or git repo |
+| `coni` | Execute inline Coni scripts natively within the playbook runtime |
 
 ## Task Reference & Examples
 
@@ -270,6 +271,27 @@ handlers:
     service:
       name: nginx
       state: restarted
+```
+
+### Native Coni Scripts (`coni:`)
+You can natively execute inline scripts written in Coni. The runtime intelligently injects the current execution context directly into your script as a map named `vars`, enabling you to interact with playbook variables without complex string templating.
+
+```yaml
+tasks:
+  - name: "Generate timestamp"
+    shell:
+      cmd: "date"
+    register: system_date
+
+  - name: "Manipulate data natively"
+    coni:
+      script: |
+        (require "libs/os/src/io.coni" :as io)
+        (let [date-val (get vars "system_date")]
+          (println "The date is:" date-val)
+          (io/write-file "/tmp/native-log.txt" (str "Logged on: " date-val))
+          "Operation completed successfully")
+    register: coni_result
 ```
 
 ## Global Configuration Interpolation

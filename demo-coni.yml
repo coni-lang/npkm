@@ -1,0 +1,22 @@
+tasks:
+  - name: Setup test vars
+    shell:
+      cmd: "echo 'hello'"
+    register: my_output
+
+  - name: Run a native Coni script
+    coni:
+      script: |
+        (require "libs/os/src/io.coni" :as io)
+        (println "Accessing variables: " (get vars "my_output"))
+        (io/write-file "tmp/coni_test.txt" (str "Value: " (get vars "my_output")))
+        "Successfully wrote file"
+    register: coni_res
+
+  - name: Check result
+    debug:
+      msg: "Coni task returned: {{ coni_res }}"
+
+  - name: Verify file
+    shell:
+      cmd: "cat tmp/coni_test.txt"

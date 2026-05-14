@@ -508,6 +508,16 @@
        (let [res (if conn (sys-ssh-exec (assoc conn :debug true) cmd) (shell/sh cmd))]
           (if (= (:code res) 0) nil (throw (:stderr res)))))))
 
+(defrecord ConiTask [spec]
+  PlaybookTask
+  (execute [this]
+    (let [s (:spec this)
+          script (:script s)
+          vars (if (:__vars__ s) (:__vars__ s) {})
+          code (str "(let [vars " (pr-str vars) "]\n" script "\n)")
+          res (try (eval-string code) (catch e (throw e)))]
+      (str res))))
+
 (defrecord TemplateTask [spec]
   PlaybookTask
   (execute [this]
@@ -614,6 +624,7 @@
    :user UserTask
    :service ServiceTask
    :template TemplateTask
+   :coni ConiTask
    :path PathTask
    :powershell PowershellTask})
 
