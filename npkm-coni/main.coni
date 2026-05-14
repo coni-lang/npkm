@@ -782,8 +782,22 @@ v-val v-clean
         (str/replace (str/replace node "{{ item }}" (str item-val)) "{{item}}" (str item-val))
         node))))
 
+(defn expand-home [path]
+  (if (str/starts-with? path "~/")
+    (let [home (str/trim (:stdout (shell/sh "echo $HOME")))]
+      (str home (subs path 1)))
+    path))
+
+(defn read-parsed-file [path default-val]
+  (if (io/exists? path)
+    (let [content (io/read-file path)]
+      (if (str/ends-with? path ".edn")
+        (read-string content)
+        (read-string (yaml/yaml-to-edn content))))
+    default-val))
+
 (defn load-included-tasks [source]
-  "Load a task list from a local .yml file, a directory, or a git repo URL. Returns {:tasks [] :defaults {}}"
+  "Load a task list from a local file, a directory, or a git repo URL. Returns {:tasks [] :defaults {}}"
   (let [is-git (or (str/ends-with? source ".git")
                    (str/starts-with? source "git://")
                    (str/starts-with? source "git@")
@@ -793,42 +807,46 @@ v-val v-clean
         (shell/sh (str "rm -rf " tmp-dir))
         (let [res (shell/sh (str "git clone " source " " tmp-dir))]
           (if (= (:code res) 0)
-            (let [t1 (str tmp-dir "/tasks/main.yml")
+            (let [t-edn (str tmp-dir "/tasks/main.edn")
+                  t-yml (str tmp-dir "/tasks/main.yml")
                   t2 (str tmp-dir "/tasks.yml")
                   t3 (str tmp-dir "/playbook.yml")
-                  real-t (if (io/exists? t1) t1 (if (io/exists? t2) t2 (if (io/exists? t3) t3 "")))
-                  t-content (if (> (count real-t) 0) (io/read-file real-t) "")
-                  t-parsed (if (> (count t-content) 0) (read-string (yaml/yaml-to-edn t-content)) [])
-                  d1 (str tmp-dir "/defaults/main.yml")
-                  d-content (if (io/exists? d1) (io/read-file d1) "")
-                  d-parsed (if (> (count d-content) 0) (read-string (yaml/yaml-to-edn d-content)) {})
+                  real-t (if (io/exists? t-edn) t-edn (if (io/exists? t-yml) t-yml (if (io/exists? t2) t2 (if (io/exists? t3) t3 ""))))
+                  t-parsed (if (> (count real-t) 0) (read-parsed-file real-t []) [])
+                  d-edn (str tmp-dir "/defaults/main.edn")
+                  d-yml (str tmp-dir "/defaults/main.yml")
+                  real-d (if (io/exists? d-edn) d-edn (if (io/exists? d-yml) d-yml ""))
+                  d-parsed (if (> (count real-d) 0) (read-parsed-file real-d {}) {})
                   tasks-vec (if (vector? t-parsed) t-parsed [])
                   defs-map (if (map? d-parsed) d-parsed {})]
               {:tasks tasks-vec :defaults defs-map})
             (throw (str "include_tasks: failed to clone " source ": " (:stderr res))))))
-      (if (io/directory? source)
-        (let [t1 (str source "/tasks/main.yml")
-              t-content (if (io/exists? t1) (io/read-file t1)
-                          (let [entries (io/read-dir source)
-                                yml-files (filter (fn [e] (or (str/ends-with? e ".yml") (str/ends-with? e ".yaml"))) entries)
-                                first-file (first yml-files)]
-                            (if first-file (io/read-file (str source "/" first-file)) "")))
-              t-parsed (if (> (count t-content) 0) (read-string (yaml/yaml-to-edn t-content)) [])
-              d1 (str source "/defaults/main.yml")
-              d-content (if (io/exists? d1) (io/read-file d1) "")
-              d-parsed (if (> (count d-content) 0) (read-string (yaml/yaml-to-edn d-content)) {})
-              tasks-vec (if (vector? t-parsed) t-parsed [])
-              defs-map (if (map? d-parsed) d-parsed {})]
-          {:tasks tasks-vec :defaults defs-map})
-        (if (io/exists? source)
-          (let [content (io/read-file source)
-                is-yaml (or (str/ends-with? source ".yml") (str/ends-with? source ".yaml"))
-                parsed (if is-yaml
-                         (read-string (yaml/yaml-to-edn content))
-                         (read-string content))
-                tasks-vec (if (vector? parsed) parsed [])]
-            {:tasks tasks-vec :defaults {}})
-          (throw (str "include_tasks: file not found: " source)))))))
+      (let [actual-source (if (and (not (io/directory? source)) (io/directory? (str (expand-home "~/.npkm/roles/") source)))
+                            (str (expand-home "~/.npkm/roles/") source)
+                            source)]
+        (if (io/directory? actual-source)
+          (let [source actual-source
+                t-edn (str source "/tasks/main.edn")
+                t-yml (str source "/tasks/main.yml")
+                real-t (if (io/exists? t-edn) t-edn (if (io/exists? t-yml) t-yml ""))
+                t-parsed (if (> (count real-t) 0)
+                             (read-parsed-file real-t [])
+                             (let [entries (io/read-dir source)
+                                   files (filter (fn [e] (or (str/ends-with? e ".yml") (str/ends-with? e ".yaml") (str/ends-with? e ".edn"))) entries)
+                                   first-file (first files)]
+                               (if first-file (read-parsed-file (str source "/" first-file) []) [])))
+                d-edn (str source "/defaults/main.edn")
+                d-yml (str source "/defaults/main.yml")
+                real-d (if (io/exists? d-edn) d-edn (if (io/exists? d-yml) d-yml ""))
+                d-parsed (if (> (count real-d) 0) (read-parsed-file real-d {}) {})
+                tasks-vec (if (vector? t-parsed) t-parsed [])
+                defs-map (if (map? d-parsed) d-parsed {})]
+            {:tasks tasks-vec :defaults defs-map})
+          (if (io/exists? source)
+            (let [parsed (read-parsed-file source [])
+                  tasks-vec (if (vector? parsed) parsed [])]
+              {:tasks tasks-vec :defaults {}})
+            (throw (str "include_tasks: file not found: " source))))))))
 
 (defn eval-when [expr vars]
   (if (not expr) true
@@ -1386,8 +1404,33 @@ v-val v-clean
         (sys-exit 0))
       nil)
     
-    (let [pos-args-clean (filter (fn [x] (and (not (str/ends-with? x ".coni")) (not (or (= x "-i") (= x inv-file))))) pos-args)
-          playbook-file (first pos-args-clean)
+    (let [pos-args-clean (filter (fn [x] (and (not (str/ends-with? x ".coni")) (not (or (= x "-i") (= x inv-file))))) pos-args)]
+      (if (and (= (first pos-args-clean) "roles") (= (second pos-args-clean) "install"))
+        (do
+          (let [repo-url (if (> (count pos-args-clean) 2) (nth pos-args-clean 2) nil)
+                version (if (> (count pos-args-clean) 3) (nth pos-args-clean 3) nil)]
+            (if (not repo-url)
+              (do (println "Usage: npkm roles install <git-url> [version]") (sys-exit 1)))
+            (let [repo-name (last (str/split repo-url "/"))
+                  clean-name (if (str/ends-with? repo-name ".git") (subs repo-name 0 (- (count repo-name) 4)) repo-name)
+                  dest-dir (str (expand-home "~/.npkm/roles/") clean-name)]
+              (if version
+                (println (str "Installing role from " repo-url " (version: " version ") into " dest-dir "..."))
+                (println (str "Installing role from " repo-url " into " dest-dir "...")))
+              (shell/sh "mkdir -p ~/.npkm/roles")
+              (shell/sh (str "rm -rf " dest-dir))
+              (let [res (shell/sh (str "git clone " repo-url " " dest-dir))]
+                 (if (= (:code res) 0)
+                   (do
+                     (if version
+                       (let [checkout-res (shell/sh (str "cd " dest-dir " && git checkout " version))]
+                         (if (= (:code checkout-res) 0)
+                           (println (str "Role installed successfully into " dest-dir " at version " version))
+                           (println "Failed to checkout version:" (:stderr checkout-res))))
+                       (println (str "Role installed successfully into " dest-dir))))
+                   (println "Failed to install role:" (:stderr res))))))
+          (sys-exit 0)))
+      (let [playbook-file (first pos-args-clean)
           is-git? (if playbook-file (or (str/ends-with? playbook-file ".git") (str/starts-with? playbook-file "git://") (str/starts-with? playbook-file "git@") (str/starts-with? playbook-file "ssh://git@")) false)
           is-doc? (some (fn [x] (= x "--doc")) flags)
           labels-list (if labels-val (str/split labels-val ",") [])
@@ -1463,7 +1506,7 @@ v-val v-clean
                         parsed-data (parse-playbook playbook-file content)
                         tasks (:tasks parsed-data)
                         cfg (:cfg parsed-data)]
-                    (execute-playbook tasks inventory cfg is-bw content is-debug is-dry-run is-diff))))))))))
+                    (execute-playbook tasks inventory cfg is-bw content is-debug is-dry-run is-diff)))))))))))
 
 )
 (if (not (some (fn [x] (= x "test")) (sys-os-args)))
