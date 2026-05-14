@@ -23,15 +23,15 @@
           :state "directory"}}
 
   {:name "Build macOS binary"
-   :shell {:cmd "CONI_HOME=/Users/nico/cool/coni-lang PATH=\"$PATH:/usr/local/go/bin:/opt/homebrew/bin\" CGO_ENABLED=0 /tmp/coni-compiler build . -o ../dist/npkm-coni"
+   :shell {:cmd "CONI_HOME=/Users/nico/cool/coni-lang PATH=\"$PATH:/usr/local/go/bin:/opt/homebrew/bin\" CGO_ENABLED=0 /tmp/coni-compiler build . -o ../dist/npkm-coni && touch ../dist/npkm-coni"
            :cwd "npkm-coni"}}
 
   {:name "Build Windows binary"
-   :shell {:cmd "CONI_HOME=/Users/nico/cool/coni-lang PATH=\"$PATH:/usr/local/go/bin:/opt/homebrew/bin\" CGO_ENABLED=0 GOOS=windows GOARCH=amd64 /tmp/coni-compiler build . -o ../dist/npkm-coni.exe"
+   :shell {:cmd "CONI_HOME=/Users/nico/cool/coni-lang PATH=\"$PATH:/usr/local/go/bin:/opt/homebrew/bin\" CGO_ENABLED=0 GOOS=windows GOARCH=amd64 /tmp/coni-compiler build . -o ../dist/npkm-coni.exe && touch ../dist/npkm-coni.exe"
            :cwd "npkm-coni"}}
 
   {:name "Build Linux binary"
-   :shell {:cmd "CONI_HOME=/Users/nico/cool/coni-lang PATH=\"$PATH:/usr/local/go/bin:/opt/homebrew/bin\" CGO_ENABLED=0 GOOS=linux GOARCH=amd64 /tmp/coni-compiler build . -o ../dist/npkm-coni-linux"
+   :shell {:cmd "CONI_HOME=/Users/nico/cool/coni-lang PATH=\"$PATH:/usr/local/go/bin:/opt/homebrew/bin\" CGO_ENABLED=0 GOOS=linux GOARCH=amd64 /tmp/coni-compiler build . -o ../dist/npkm-coni-linux && touch ../dist/npkm-coni-linux"
            :cwd "npkm-coni"}}
 
   {:name "Update local npkm-coni"
