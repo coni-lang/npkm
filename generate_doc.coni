@@ -1,0 +1,11 @@
+(require "libs/os/src/io.coni" :as io)
+(require "libs/json/src/json.coni" :as json)
+(require "libs/str/src/str.coni" :as str)
+
+(let [content (io/read-file "README.md")
+      safe-content1 (str/replace content "<" "&lt;")
+      safe-content2 (str/replace safe-content1 ">" "&gt;")
+      html (str "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>NPKM Documentation</title><link rel=\"stylesheet\" href=\"https://cdn.simplecss.org/simple.min.css\"><style>body { max-width: 800px; margin: 0 auto; padding: 2rem; } pre { background: #222; color: #ddd; padding: 1rem; border-radius: 8px; overflow-x: auto; white-space: pre-wrap; font-family: system-ui, -apple-system, sans-serif; }</style></head><body><h1>NPKM Documentation</h1><pre>" safe-content2 "</pre></body></html>")
+      escaped-html (json/stringify html)]
+  (io/write-file "npkm-coni/doc_data.coni" (str "(def npkm-readme " escaped-html ")\n"))
+  (println "doc_data.coni generated successfully!"))

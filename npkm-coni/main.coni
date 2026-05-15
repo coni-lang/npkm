@@ -8,6 +8,7 @@
 (require "libs/ssh/src/ssh.coni" :as ssh)
 (require "libs/template/src/template.coni" :as tpl)
 (require "libs/vault/src/vault.coni" :as vault)
+(require "doc_data.coni" :as doc)
 
 ;; --- Global Logger ---
 (def original-println println)
@@ -1692,6 +1693,16 @@ v-val v-clean
                     (vault/decrypt-file target-file real-pass)
                     (println "Decryption successful."))
                   (println "Unknown vault action:" action)))))
+          (sys-exit 0)))
+      ;; --- npkm doc ---
+      (if (= (first pos-args-clean) "doc")
+        (do
+          (let [port (if (> (count pos-args-clean) 1) (nth pos-args-clean 1) "8888")]
+            (println (str "Starting NPKM documentation server on http://localhost:" port " ..."))
+            (sys-http-serve port (fn [req]
+               {:status 200
+                :headers {"Content-Type" "text/html"}
+                :body doc/npkm-readme})))
           (sys-exit 0)))
       ;; --- npkm init ---
       (if (= (first pos-args-clean) "init")

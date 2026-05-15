@@ -11,6 +11,9 @@
    :shell {:cmd "PATH=\"$PATH:/usr/local/go/bin:/opt/homebrew/bin\" go build -o /tmp/coni-compiler ."
            :cwd "/Users/nico/cool/coni-lang"}}
 
+  {:name "Generate embedded documentation"
+   :shell {:cmd "/tmp/coni-compiler generate_doc.coni"}}
+
   {:name "Run tests"
    :shell {:cmd "CONI_HOME=/Users/nico/cool/coni-lang /tmp/coni-compiler test ..."
            :cwd "npkm-coni"}}
