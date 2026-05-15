@@ -1,34 +1,53 @@
-(def npkm-readme "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>NPKM Documentation</title><link rel=\"stylesheet\" href=\"https://cdn.simplecss.org/simple.min.css\"><style>body { max-width: 800px; margin: 0 auto; padding: 2rem; } pre { background: #222; color: #ddd; padding: 1rem; border-radius: 8px; overflow-x: auto; white-space: pre-wrap; font-family: system-ui, -apple-system, sans-serif; }</style></head><body><h1>NPKM Documentation</h1><pre># NPKM — Nuke Playbook Kit Manager
+(def npkm-readme "<!DOCTYPE html>
+<html lang=\"en\">
+<head>
+  <meta charset=\"utf-8\">
+  <title>NPKM Documentation</title>
+  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">
+  <link rel=\"stylesheet\" href=\"https://cdn.jsdelivr.net/npm/github-markdown-css@5.2.0/github-markdown.min.css\">
+  <link rel=\"stylesheet\" href=\"https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github-dark.min.css\">
+  <style>
+    body { box-sizing: border-box; min-width: 200px; max-width: 980px; margin: 0 auto; padding: 45px; }
+    @media (max-width: 767px) { body { padding: 15px; } }
+    .markdown-body { font-family: -apple-system,BlinkMacSystemFont,\"Segoe UI\",Helvetica,Arial,sans-serif; }
+  </style>
+</head>
+<body class=\"markdown-body\">
+  <div id=\"content\">Loading documentation...</div>
+  <script src=\"https://cdn.jsdelivr.net/npm/marked/marked.min.js\"></script>
+  <script src=\"https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js\"></script>
+  <script>
+    const rawMarkdown = `# NPKM — Nuke Playbook Kit Manager
 
-&gt; A native, zero-dependency automation engine written in **Coni**. Deploy, provision, and orchestrate infrastructure with full Ansible parity — and capabilities beyond it.
+> A native, zero-dependency automation engine written in **Coni**. Deploy, provision, and orchestrate infrastructure with full Ansible parity — and capabilities beyond it.
 
 ---
 
 ## Release History
 
 ### v2.0 \"Novae\" _(Latest)_
-- **[`set_fact` runtime variables](#set_fact)**: Assign variables in one task and reference them with `${var}` in any subsequent task
-- **Config seeding**: All `config:` block keys are automatically available as `${key}` throughout the playbook — no `set_fact` needed
-- **Variable chaining**: `set_fact` values can themselves reference earlier `${vars}`, enabling derived variables
-- **Mid-playbook overrides**: Call `set_fact` again at any point to update a variable for all following tasks
-- **Universal interpolation**: `${var}` works in every string field across all modules (`shell.cmd`, `file.path`, `debug.msg`, `archive.src/dest`, etc.)
+- **[\\`set_fact\\` runtime variables](#set_fact)**: Assign variables in one task and reference them with \\`\\${var}\\` in any subsequent task
+- **Config seeding**: All \\`config:\\` block keys are automatically available as \\`\\${key}\\` throughout the playbook — no \\`set_fact\\` needed
+- **Variable chaining**: \\`set_fact\\` values can themselves reference earlier \\`\\${vars}\\`, enabling derived variables
+- **Mid-playbook overrides**: Call \\`set_fact\\` again at any point to update a variable for all following tasks
+- **Universal interpolation**: \\`\\${var}\\` works in every string field across all modules (\\`shell.cmd\\`, \\`file.path\\`, \\`debug.msg\\`, \\`archive.src/dest\\`, etc.)
 
 ### v1.6 \"Sentinel\"
-- **[Role Package Manager](#roles--package-manager)**: Install reusable automation roles from any Git repository with `npkm roles install`
-- **[Project Scaffolding](#project-scaffolding-npkm-init)**: Scaffold a complete project skeleton with `npkm init`
-- **[Static Analysis](#static-analysis-npkm-lint)**: Validate playbooks before running with `npkm lint`
-- **[Watch Mode](#watch-mode-npkm-watch)**: Auto re-run playbooks on file change with `npkm watch`
-- **[Interactive Step Mode](#interactive-step-mode---step)**: Execute tasks one-by-one with confirmation via `--step`
-- **[Execution Reports](#execution-reports---report)**: Generate JSON + HTML audit reports via `--report`
-- **[Run History](#run-history)**: Browse and diff past execution logs with `npkm run history`
-- **Keyword var interpolation**: `:vars {:key val}` in `include_tasks` now correctly resolves `{{ key }}` templates
-- **Multi-line command safety**: SSH commands with `&&` in block scalars now execute correctly on Debian/Ubuntu (`dash`)
+- **[Role Package Manager](#roles--package-manager)**: Install reusable automation roles from any Git repository with \\`npkm roles install\\`
+- **[Project Scaffolding](#project-scaffolding-npkm-init)**: Scaffold a complete project skeleton with \\`npkm init\\`
+- **[Static Analysis](#static-analysis-npkm-lint)**: Validate playbooks before running with \\`npkm lint\\`
+- **[Watch Mode](#watch-mode-npkm-watch)**: Auto re-run playbooks on file change with \\`npkm watch\\`
+- **[Interactive Step Mode](#interactive-step-mode---step)**: Execute tasks one-by-one with confirmation via \\`--step\\`
+- **[Execution Reports](#execution-reports---report)**: Generate JSON + HTML audit reports via \\`--report\\`
+- **[Run History](#run-history)**: Browse and diff past execution logs with \\`npkm run history\\`
+- **Keyword var interpolation**: \\`:vars {:key val}\\` in \\`include_tasks\\` now correctly resolves \\`{{ key }}\\` templates
+- **Multi-line command safety**: SSH commands with \\`&&\\` in block scalars now execute correctly on Debian/Ubuntu (\\`dash\\`)
 
 ### v1.5 \"Quantum Weaver\"
-- Native Templating (Variables & Loops), Multi-Play Architecture, Documentation Generation (`--doc`), Task Filtering (`--labels`, `--names`), Background Logging
+- Native Templating (Variables & Loops), Multi-Play Architecture, Documentation Generation (\\`--doc\\`), Task Filtering (\\`--labels\\`, \\`--names\\`), Background Logging
 
 ### v1.4 \"Flow Control\"
-- `block` / `rescue` / `always`, Handlers & Notifications, Parallel Host Execution (`forks`)
+- \\`block\\` / \\`rescue\\` / \\`always\\`, Handlers & Notifications, Parallel Host Execution (\\`forks\\`)
 
 ---
 
@@ -46,7 +65,7 @@
 
 ## Quick Start
 
-```bash
+\\`\\`\\`bash
 # Run a playbook locally
 npkm playbook.yml
 
@@ -61,40 +80,40 @@ npkm lint playbook.yml
 
 # Watch for changes and re-run automatically
 npkm watch -i inventory.yml playbook.yml
-```
+\\`\\`\\`
 
 ---
 
 ## Roles — Package Manager
 
-Roles are reusable, Git-versioned task collections. Install them from any Git repository and reference them in your playbooks via `include_tasks`.
+Roles are reusable, Git-versioned task collections. Install them from any Git repository and reference them in your playbooks via \\`include_tasks\\`.
 
 ### Installing a role
 
-```bash
-# Install from a Git repo — cloned into ~/.npkm/roles/&lt;repo-name&gt;/
+\\`\\`\\`bash
+# Install from a Git repo — cloned into ~/.npkm/roles/<repo-name>/
 npkm roles install git@github.com:myorg/nginx-role.git
 
 # Install a specific version (tag or branch)
 npkm roles install git@gitlab.example.com:sys/binet.git --version v1.2.0
-```
+\\`\\`\\`
 
-Roles are stored in `~/.npkm/roles/`. Each role follows this layout:
+Roles are stored in \\`~/.npkm/roles/\\`. Each role follows this layout:
 
-```
+\\`\\`\\`
 ~/.npkm/roles/
   nginx-role/
     tasks/
       main.edn       ← entry point (flat list of tasks)
     defaults/
       main.edn       ← default variable values
-```
+\\`\\`\\`
 
 ### Using a role in a playbook
 
-Reference an installed role with `include_tasks:` pointing to the role name under `roles/`:
+Reference an installed role with \\`include_tasks:\\` pointing to the role name under \\`roles/\\`:
 
-```yaml
+\\`\\`\\`yaml
 # smb_share.yml
 - name: Setup Samba share
   hosts: biner3
@@ -106,11 +125,11 @@ Reference an installed role with `include_tasks:` pointing to the role name unde
         share_path:  \"/mnt/data/samba/my_share\"
         smb_user:    \"alice\"
         smb_comment: \"Production data share\"
-```
+\\`\\`\\`
 
 Or in EDN format:
 
-```edn
+\\`\\`\\`edn
 {:name \"Setup Samba share on biner3\"
  :hosts \"biner3\"
  :tasks [{:name \"Install and configure Samba\"
@@ -119,43 +138,43 @@ Or in EDN format:
                  :share_path  \"/mnt/data/samba/my_share\"
                  :smb_user    \"alice\"
                  :smb_comment \"Production data share\"}}]}
-```
+\\`\\`\\`
 
 ### Role defaults
 
-Variables defined in `defaults/main.edn` act as fallbacks — overridden by anything passed in `:vars`:
+Variables defined in \\`defaults/main.edn\\` act as fallbacks — overridden by anything passed in \\`:vars\\`:
 
-```edn
+\\`\\`\\`edn
 ; defaults/main.edn
 {:share_name  \"DEFAULT_SHARE\"
  :smb_user    \"guest\"
  :smb_password \"changeme\"}
-```
+\\`\\`\\`
 
 ### Role task file format
 
-`tasks/main.edn` must be a **flat vector of tasks** (no `:hosts` or play wrapping):
+\\`tasks/main.edn\\` must be a **flat vector of tasks** (no \\`:hosts\\` or play wrapping):
 
-```edn
+\\`\\`\\`edn
 [
   {:name \"Install samba\" :become true :shell {:cmd \"apt-get install -y samba\"}}
   {:name \"Start smbd\"    :become true :systemd {:name \"smbd\" :state \"restarted\" :enabled true}}
 ]
-```
+\\`\\`\\`
 
 ---
 
-## Project Scaffolding (`npkm init`)
+## Project Scaffolding (\\`npkm init\\`)
 
 Scaffold a ready-to-run project structure in one command:
 
-```bash
+\\`\\`\\`bash
 npkm init my-project/
-```
+\\`\\`\\`
 
 Creates:
 
-```
+\\`\\`\\`
 my-project/
   main.edn          ← main playbook
   inventory.edn     ← host inventory
@@ -164,30 +183,30 @@ my-project/
   tasks/
     setup.edn       ← example task file
   roles/            ← role directory
-```
+\\`\\`\\`
 
 ---
 
-## Static Analysis (`npkm lint`)
+## Static Analysis (\\`npkm lint\\`)
 
 Validate playbook structure before executing — catches missing required fields, unknown modules, and structural issues:
 
-```bash
+\\`\\`\\`bash
 npkm lint playbook.yml
 npkm lint smb_share.edn
 
 # Example output:
 # ⬡ Linting: smb_share.edn
 # ✓ No issues found.
-```
+\\`\\`\\`
 
 ---
 
-## Watch Mode (`npkm watch`)
+## Watch Mode (\\`npkm watch\\`)
 
 Monitor your playbook and inventory files for changes and re-run automatically — ideal during active role or playbook development:
 
-```bash
+\\`\\`\\`bash
 # Watch a playbook (re-runs on any file change)
 npkm watch playbook.yml
 
@@ -199,49 +218,49 @@ npkm watch -i inventory.edn smb_share.edn
 #   Press Ctrl+C to stop.
 #
 # [watch] Change detected — re-running playbook... (run #1)
-```
+\\`\\`\\`
 
 ---
 
-## Interactive Step Mode (`--step`)
+## Interactive Step Mode (\\`--step\\`)
 
 Execute tasks one at a time with an interactive prompt — ideal for high-risk or first-time runs:
 
-```bash
+\\`\\`\\`bash
 npkm --step -i inventory.yml deploy.yml
-```
+\\`\\`\\`
 
-```
+\\`\\`\\`
 TASK [ Install nginx ]
   → Run this task? [y/n/q]:
-```
+\\`\\`\\`
 
-- `y` — run the task and continue
-- `n` — skip this task
-- `q` — quit execution immediately
+- \\`y\\` — run the task and continue
+- \\`n\\` — skip this task
+- \\`q\\` — quit execution immediately
 
 ---
 
-## Execution Reports (`--report`)
+## Execution Reports (\\`--report\\`)
 
-Generate a timestamped JSON + dark-themed HTML execution report in `~/.npkm/reports/` after every run:
+Generate a timestamped JSON + dark-themed HTML execution report in \\`~/.npkm/reports/\\` after every run:
 
-```bash
+\\`\\`\\`bash
 npkm --report -i inventory.yml playbook.yml
 
 # --- NPKM Run Report ---
 #   ok=12 changed=4 failed=0 skipped=1 duration=8s
 #   JSON: ~/.npkm/reports/2026-05-15_09-45-00.json
 #   HTML: ~/.npkm/reports/2026-05-15_09-45-00.html
-```
+\\`\\`\\`
 
 ---
 
 ## Run History
 
-Browse, inspect, and diff past execution logs stored in `~/.npkm/logs/`:
+Browse, inspect, and diff past execution logs stored in \\`~/.npkm/logs/\\`:
 
-```bash
+\\`\\`\\`bash
 # List all past runs
 npkm run history
 
@@ -250,34 +269,34 @@ npkm run history last
 
 # Diff the last two runs
 npkm run history diff
-```
+\\`\\`\\`
 
 ---
 
 ## New Modules (v2.0 & v1.6)
 
-### `set_fact`
+### \\`set_fact\\`
 
-Inject variables into the runtime environment mid-playbook. These variables are immediately available to all subsequent tasks using the new `${var}` or `{{ var }}` syntax.
+Inject variables into the runtime environment mid-playbook. These variables are immediately available to all subsequent tasks using the new \\`\\${var}\\` or \\`{{ var }}\\` syntax.
 
 You can even chain variables, referencing previously defined facts!
 
-```yaml
+\\`\\`\\`yaml
 - name: Compute paths
   set_fact:
     app_root: \"/opt/myapp\"
-    log_dir:  \"${app_root}/logs\"
+    log_dir:  \"\\${app_root}/logs\"
 
 - name: Use the variable
   debug:
-    msg: \"App root is ${app_root} and logs go to ${log_dir}\"
-```
+    msg: \"App root is \\${app_root} and logs go to \\${log_dir}\"
+\\`\\`\\`
 
-### `test`
+### \\`test\\`
 
 Inline TDD-style assertions on task command output — fail fast if expectations aren't met:
 
-```yaml
+\\`\\`\\`yaml
 - name: Assert samba is running
   test:
     cmd: \"systemctl is-active smbd\"
@@ -287,7 +306,7 @@ Inline TDD-style assertions on task command output — fail fast if expectations
   test:
     cmd: \"smbclient -L localhost -N\"
     contains: \"MY_SHARE\"
-```
+\\`\\`\\`
 
 ---
 
@@ -295,32 +314,32 @@ Inline TDD-style assertions on task command output — fail fast if expectations
 
 | Module | Description |
 |---|---|
-| `shell`, `command` | Execute shell commands |
-| `powershell` | Windows PowerShell execution |
-| `file` | Manage files, directories, symlinks |
-| `copy`, `move`, `remove` | File I/O primitives |
-| `lineinfile`, `replace` | Regex-based file modification |
-| `template` | Render templated config files |
-| `get_url` | Download remote files |
-| `archive`, `unzip` | Compress / extract |
-| `package` | brew / apt / yum / winget / choco |
-| `service`, `systemd` | Manage system daemons |
-| `user` | Create / remove system users |
-| `cron` | Manage crontab entries |
-| `git` | Clone or pull repositories |
-| `path` | Modify `$PATH` |
-| `debug`, `fail` | Output and control flow |
-| `include_tasks` | Load tasks from file, directory, or Git |
-| `block` / `rescue` / `always` | Error handling and cleanup |
-| `coni` | Inline Coni scripts with full playbook context |
-| `set_fact` | Inject runtime variables |
-| `test` | Inline assertions on command output |
+| \\`shell\\`, \\`command\\` | Execute shell commands |
+| \\`powershell\\` | Windows PowerShell execution |
+| \\`file\\` | Manage files, directories, symlinks |
+| \\`copy\\`, \\`move\\`, \\`remove\\` | File I/O primitives |
+| \\`lineinfile\\`, \\`replace\\` | Regex-based file modification |
+| \\`template\\` | Render templated config files |
+| \\`get_url\\` | Download remote files |
+| \\`archive\\`, \\`unzip\\` | Compress / extract |
+| \\`package\\` | brew / apt / yum / winget / choco |
+| \\`service\\`, \\`systemd\\` | Manage system daemons |
+| \\`user\\` | Create / remove system users |
+| \\`cron\\` | Manage crontab entries |
+| \\`git\\` | Clone or pull repositories |
+| \\`path\\` | Modify \\`$PATH\\` |
+| \\`debug\\`, \\`fail\\` | Output and control flow |
+| \\`include_tasks\\` | Load tasks from file, directory, or Git |
+| \\`block\\` / \\`rescue\\` / \\`always\\` | Error handling and cleanup |
+| \\`coni\\` | Inline Coni scripts with full playbook context |
+| \\`set_fact\\` | Inject runtime variables |
+| \\`test\\` | Inline assertions on command output |
 
 ---
 
 ## Remote SSH Orchestration (Inventories)
 
-```yaml
+\\`\\`\\`yaml
 # inventory.yml
 all:
   hosts:
@@ -329,17 +348,17 @@ all:
       ansible_user: ubuntu
       ansible_ssh_private_key_file: \"~/.ssh/id_rsa\"
       ansible_port: 22
-```
+\\`\\`\\`
 
-```bash
+\\`\\`\\`bash
 npkm -i inventory.yml playbook.yml
-```
+\\`\\`\\`
 
 ---
 
 ## Flow Control & Error Handling
 
-```yaml
+\\`\\`\\`yaml
 tasks:
   - name: Risky operations
     block:
@@ -350,12 +369,12 @@ tasks:
     rescue:
       - name: Use fallback
         shell:
-          cmd: \"echo 'fallback' &gt; /tmp/artifact\"
+          cmd: \"echo 'fallback' > /tmp/artifact\"
     always:
       - name: Cleanup
         debug:
           msg: \"Run complete.\"
-```
+\\`\\`\\`
 
 ---
 
@@ -363,7 +382,7 @@ tasks:
 
 Encrypt secrets at rest, decrypt transparently at runtime:
 
-```bash
+\\`\\`\\`bash
 # Encrypt a file
 npkm vault encrypt secrets.edn
 
@@ -373,26 +392,26 @@ npkm vault decrypt secrets.edn.vault
 # Runtime: set the password via environment variable
 export NPKM_VAULT_PASSWORD=mysecret
 npkm -i inventory.yml playbook.yml
-```
+\\`\\`\\`
 
 ---
 
 ## Documentation Generation
 
-```bash
+\\`\\`\\`bash
 # Generate Mermaid flowchart + task table to stdout
 npkm --doc playbook.yml
 
 # Save to file
-npkm -i inventory.yml --doc deploy.yml &gt; docs/deploy.md
-```
+npkm -i inventory.yml --doc deploy.yml > docs/deploy.md
+\\`\\`\\`
 
 ---
 
 ## Usage Reference
 
-```bash
-npkm [options] &lt;playbook.yml | directory | https://... | git@...&gt;
+\\`\\`\\`bash
+npkm [options] <playbook.yml | directory | https://... | git@...>
 
 Options:
   -v                    print version
@@ -402,31 +421,41 @@ Options:
   --diff                show file diffs
   --report              generate HTML + JSON execution report
   --step                interactive task-by-task confirmation
-  --labels &lt;csv&gt;        run only tasks matching labels
-  --names  &lt;csv&gt;        run only tasks matching names
-  -i &lt;file&gt;             inventory file
+  --labels <csv>        run only tasks matching labels
+  --names  <csv>        run only tasks matching names
+  -i <file>             inventory file
   -bw                   disable color output
 
 Commands:
   npkm init [dir]                scaffold a new project
-  npkm lint &lt;playbook&gt;           static analysis
-  npkm watch &lt;playbook&gt;          re-run on file change
+  npkm lint <playbook>           static analysis
+  npkm watch <playbook>          re-run on file change
   npkm run history               list past run logs
   npkm run history last          show most recent log
   npkm run history diff          diff last two runs
-  npkm roles install &lt;git-url&gt;   install a role from Git
-  npkm vault encrypt &lt;file&gt;      encrypt with AES-256
-  npkm vault decrypt &lt;file&gt;      decrypt vault file
-```
+  npkm roles install <git-url>   install a role from Git
+  npkm vault encrypt <file>      encrypt with AES-256
+  npkm vault decrypt <file>      decrypt vault file
+\\`\\`\\`
 
 ---
 
 ## Directory Layout
 
-```
+\\`\\`\\`
 ~/.npkm/
   logs/       ← timestamped execution logs (auto-created)
   reports/    ← JSON + HTML reports (--report)
   roles/      ← installed roles (npkm roles install)
-```
-</pre></body></html>")
+\\`\\`\\`
+`;
+    marked.setOptions({
+      highlight: function(code, lang) {
+        const language = hljs.getLanguage(lang) ? lang : 'plaintext';
+        return hljs.highlight(code, { language }).value;
+      }
+    });
+    document.getElementById('content').innerHTML = marked.parse(rawMarkdown);
+  </script>
+</body>
+</html>")

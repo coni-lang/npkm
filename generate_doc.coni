@@ -1,11 +1,44 @@
 (require "libs/os/src/io.coni" :as io)
-(require "libs/json/src/json.coni" :as json)
 (require "libs/str/src/str.coni" :as str)
 
 (let [content (io/read-file "README.md")
-      safe-content1 (str/replace content "<" "&lt;")
-      safe-content2 (str/replace safe-content1 ">" "&gt;")
-      html (str "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>NPKM Documentation</title><link rel=\"stylesheet\" href=\"https://cdn.simplecss.org/simple.min.css\"><style>body { max-width: 800px; margin: 0 auto; padding: 2rem; } pre { background: #222; color: #ddd; padding: 1rem; border-radius: 8px; overflow-x: auto; white-space: pre-wrap; font-family: system-ui, -apple-system, sans-serif; }</style></head><body><h1>NPKM Documentation</h1><pre>" safe-content2 "</pre></body></html>")
+      ;; Safe for JS backtick string injection
+      safe-md1 (str/replace content "\\" "\\\\")
+      safe-md2 (str/replace safe-md1 "`" "\\`")
+      safe-md  (str/replace safe-md2 "${" "\\${")
+      
+      html (str "<!DOCTYPE html>\n"
+                "<html lang=\"en\">\n"
+                "<head>\n"
+                "  <meta charset=\"utf-8\">\n"
+                "  <title>NPKM Documentation</title>\n"
+                "  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n"
+                "  <link rel=\"stylesheet\" href=\"https://cdn.jsdelivr.net/npm/github-markdown-css@5.2.0/github-markdown.min.css\">\n"
+                "  <link rel=\"stylesheet\" href=\"https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github-dark.min.css\">\n"
+                "  <style>\n"
+                "    body { box-sizing: border-box; min-width: 200px; max-width: 980px; margin: 0 auto; padding: 45px; }\n"
+                "    @media (max-width: 767px) { body { padding: 15px; } }\n"
+                "    .markdown-body { font-family: -apple-system,BlinkMacSystemFont,\"Segoe UI\",Helvetica,Arial,sans-serif; }\n"
+                "  </style>\n"
+                "</head>\n"
+                "<body class=\"markdown-body\">\n"
+                "  <div id=\"content\">Loading documentation...</div>\n"
+                "  <script src=\"https://cdn.jsdelivr.net/npm/marked/marked.min.js\"></script>\n"
+                "  <script src=\"https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js\"></script>\n"
+                "  <script>\n"
+                "    const rawMarkdown = `" safe-md "`;\n"
+                "    marked.setOptions({\n"
+                "      highlight: function(code, lang) {\n"
+                "        const language = hljs.getLanguage(lang) ? lang : 'plaintext';\n"
+                "        return hljs.highlight(code, { language }).value;\n"
+                "      }\n"
+                "    });\n"
+                "    document.getElementById('content').innerHTML = marked.parse(rawMarkdown);\n"
+                "  </script>\n"
+                "</body>\n"
+                "</html>")
+      
+      ;; Escape the final HTML string for Coni source code inclusion
       escaped-html (str/replace (str/replace html "\\" "\\\\") "\"" "\\\"")]
   (io/write-file "npkm-coni/doc_data.coni" (str "(def npkm-readme \"" escaped-html "\")\n"))
   (println "doc_data.coni generated successfully!"))
