@@ -135,10 +135,14 @@
           ;; Remote Unix/macOS: wrap in sh -c '...' so |, &&, ||, <, > are shell operators.
           ;; sh is POSIX-guaranteed (unlike bash). Single-quotes in cmd are safely escaped.
           ;; Remote Windows: pass through as-is (no sh available over SSH).
-          inner-remote-cmd (if cwd (str "cd " cwd " && " cmd) cmd)
+          ;; Normalize multi-line commands: collapse newlines to spaces so that
+          ;; `&&`, `||`, `|` etc. are never stranded at the start of a line,
+          ;; which causes a syntax error with /bin/sh (dash) on Debian/Ubuntu.
+          cmd-normalized (str/replace (str cmd) "\n" " ")
+          inner-remote-cmd (if cwd (str "cd " cwd " && " cmd-normalized) cmd-normalized)
           escaped-inner    (str/replace (str inner-remote-cmd) "'" "'\"'\"'")
           remote-cmd (if is-remote-win
-                       (str sudo-pfx cmd)
+                       (str sudo-pfx cmd-normalized)
                        (str sudo-pfx "sh -c '" escaped-inner "'"))
           ;; Local: shell/sh already runs through the OS shell, no wrapping needed.
           local-cmd (str sudo-pfx (if cwd (str "cd " cwd " && " cmd) cmd))]
