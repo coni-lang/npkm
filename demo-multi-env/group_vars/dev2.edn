@@ -1,0 +1,7 @@
+; DEV2-specific overrides — only these differ from DEV1
+{:db_host      "db.dev2.internal"
+ :db_name      "myapp_dev2"
+ :redis_host   "redis.dev2.internal"
+ :log_level    "INFO"
+ :replicas     2
+ :s3_bucket    "myapp-dev2-assets"}

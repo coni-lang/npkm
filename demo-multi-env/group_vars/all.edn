@@ -1,0 +1,10 @@
+; Shared variables across ALL environments
+; Override per-env values via inventory group vars
+{:app_name     "myapp"
+ :app_port     8080
+ :app_version  "2.1.0"
+ :app_user     "deploy"
+ :app_dir      "/opt/myapp"
+ :log_dir      "/var/log/myapp"
+ :data_dir     "/mnt/data"
+ :java_version "21"}

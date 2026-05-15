@@ -1,0 +1,8 @@
+{:app_name    "myapp"
+ :app_version "2.1.0"
+ :app_port    8080
+ :db_host     "localhost"
+ :db_name     "myapp"
+ :redis_host  "localhost"
+ :log_level   "INFO"
+ :s3_bucket   "myapp-assets"}

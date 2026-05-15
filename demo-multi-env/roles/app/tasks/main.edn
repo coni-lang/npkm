@@ -1,0 +1,26 @@
+[
+  {:name   "Print deploy info"
+   :debug  {:msg "Deploying {{ app_name }} v{{ app_version }} → {{ env }} node {{ node_index }}"}}
+
+  {:name   "Write app config"
+   :become true
+   :shell  {:cmd "cat > {{ app_dir }}/config.env << 'ENVEOF'\nAPP_NAME={{ app_name }}\nAPP_VERSION={{ app_version }}\nAPP_PORT={{ app_port }}\nDB_HOST={{ db_host }}\nDB_NAME={{ db_name }}\nREDIS_HOST={{ redis_host }}\nLOG_LEVEL={{ log_level }}\nS3_BUCKET={{ s3_bucket }}\nENVEOF"}}
+
+  {:name   "Write systemd unit"
+   :become true
+   :shell  {:cmd "printf '[Unit]\\nDescription={{ app_name }} on {{ env }}\\nAfter=network.target\\n\\n[Service]\\nUser={{ app_user }}\\nWorkingDirectory={{ app_dir }}\\nEnvironmentFile={{ app_dir }}/config.env\\nExecStart=/usr/bin/java -jar {{ app_dir }}/app.jar\\nRestart=always\\nRestartSec=5\\n\\n[Install]\\nWantedBy=multi-user.target\\n' > /etc/systemd/system/{{ app_name }}.service"}}
+
+  {:name   "Reload systemd"
+   :become true
+   :shell  {:cmd "systemctl daemon-reload"}}
+
+  {:name   "Verify config written"
+   :shell  {:cmd "cat {{ app_dir }}/config.env"}
+   :register "config_out"}
+
+  {:name   "Print config"
+   :debug  {:msg "Config on node {{ node_index }}:\n{{ config_out }}"}}
+
+  {:name   "Assert environment is correct"
+   :test   {:cmd "cat {{ app_dir }}/config.env | grep APP_NAME" :contains "{{ app_name }}"}}
+]

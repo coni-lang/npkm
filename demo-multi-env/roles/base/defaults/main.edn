@@ -1,0 +1,5 @@
+{:java_version "21"
+ :app_user     "deploy"
+ :app_dir      "/opt/myapp"
+ :log_dir      "/var/log/myapp"
+ :data_dir     "/mnt/data"}

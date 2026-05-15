@@ -1,0 +1,31 @@
+[
+  {:name   "Print baseline info"
+   :debug  {:msg "Provisioning node {{ node_index }} in {{ env }} ({{ aws_region }}/{{ instance_az }})"}}
+
+  {:name   "Create deploy user"
+   :become true
+   :shell  {:cmd "useradd -m -s /bin/bash {{ app_user }} || true"}}
+
+  {:name   "Create application directories"
+   :become true
+   :shell  {:cmd "mkdir -p {{ app_dir }} {{ log_dir }} {{ data_dir }} && chown -R {{ app_user }}:{{ app_user }} {{ app_dir }} {{ log_dir }}"}}
+
+  {:name   "Install baseline packages"
+   :become true
+   :shell  {:cmd "apt-get update -qq && apt-get install -y curl wget unzip jq htop"}}
+
+  {:name   "Install Java {{ java_version }}"
+   :become true
+   :shell  {:cmd "apt-get install -y openjdk-{{ java_version }}-jre-headless"}}
+
+  {:name   "Write environment marker"
+   :become true
+   :shell  {:cmd "echo '{{ env }}' > /etc/npkm-env && echo 'region={{ aws_region }}' >> /etc/npkm-env && echo 'az={{ instance_az }}' >> /etc/npkm-env"}}
+
+  {:name   "Verify baseline"
+   :shell  {:cmd "java -version 2>&1 | head -1"}
+   :register "java_ver"}
+
+  {:name   "Print Java version"
+   :debug  {:msg "Node {{ node_index }}: {{ java_ver }}"}}
+]

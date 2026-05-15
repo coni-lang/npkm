@@ -1,0 +1,7 @@
+; DEV1-specific overrides
+{:db_host      "db.dev1.internal"
+ :db_name      "myapp_dev1"
+ :redis_host   "redis.dev1.internal"
+ :log_level    "DEBUG"
+ :replicas     1
+ :s3_bucket    "myapp-dev1-assets"}

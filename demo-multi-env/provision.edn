@@ -1,0 +1,41 @@
+; ─────────────────────────────────────────────────────────────────────────────
+; NPKM Multi-Environment Provisioning Demo
+;
+; This SINGLE playbook provisions ALL nodes in any environment.
+; The only thing that changes between DEV1 and DEV2 is the inventory file:
+;
+;   npkm -i inventory/dev1.edn provision.edn   ← provisions DEV1 cluster
+;   npkm -i inventory/dev2.edn provision.edn   ← provisions DEV2 cluster
+;
+; forks: 3 means all 3 nodes are provisioned in PARALLEL via goroutines.
+; ─────────────────────────────────────────────────────────────────────────────
+
+[{:name   "Cluster Baseline — {{ env }}"
+  :hosts  "dev1"   ; matches inventory group: override with dev2 for DEV2
+  :forks  3        ; provision all nodes in parallel
+  :vars   {}       ; env-specific vars come from inventory group_vars
+  :tasks
+  [{:name   "Banner"
+    :debug  {:msg "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n  NPKM Cluster Provision — {{ env | upper }}\n  Region: {{ aws_region }} / AZ: {{ instance_az }}\n  Nodes: 3 (parallel, forks=3)\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"}}
+
+   {:name          "OS Baseline"
+    :include_tasks "roles/base"}
+
+   {:name          "Application Deploy"
+    :include_tasks "roles/app"}
+
+   {:name   "Node provisioned"
+    :debug  {:msg "✓ [{{ env }}] node-{{ node_index }} ready — {{ app_name }}:{{ app_port }} | db={{ db_host }}/{{ db_name }}"}}]}
+
+ {:name   "Cluster Smoke Test — {{ env }}"
+  :hosts  "dev1"
+  :forks  3
+  :tasks
+  [{:name "Assert env file exists"
+    :test {:cmd "cat /etc/npkm-env" :contains "{{ env }}"}}
+
+   {:name "Assert config is environment-specific"
+    :test {:cmd "cat {{ app_dir }}/config.env" :contains "{{ db_name }}"}}
+
+   {:name "Summary"
+    :debug {:msg "✓ Cluster {{ env }} fully provisioned and validated\n  {{ app_name }} v{{ app_version }} on 3 nodes\n  DB → {{ db_host }}/{{ db_name }}\n  Log level: {{ log_level }}"}}]}]
