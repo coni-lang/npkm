@@ -6,6 +6,8 @@
 (require "libs/str/src/str.coni" :as str)
 (require "libs/yaml/src/yaml.coni" :as yaml)
 (require "libs/ssh/src/ssh.coni" :as ssh)
+(require "libs/template/src/template.coni" :as tpl)
+(require "libs/vault/src/vault.coni" :as vault)
 
 ;; --- Global Logger ---
 (def original-println println)
@@ -27,25 +29,15 @@
 (def stats-start-ms (atom 0))
 (def stats-task-log (atom []))
 
-(defn strip-colors [txt]
-  (let [t1 (str/replace txt "\033[31m" "")
-        t2 (str/replace t1 "\033[32m" "")
-        t3 (str/replace t2 "\033[33m" "")
-        t4 (str/replace t3 "\033[34m" "")
-        t5 (str/replace t4 "\033[35m" "")
-        t6 (str/replace t5 "\033[36m" "")
-        t7 (str/replace t6 "\033[0m" "")]
-    t7))
-
 (defn println [& args]
   (let [msg (str/join " " args)]
     (original-println msg)
-    (swap! global-log-acc str (strip-colors msg) "\n")))
+    (swap! global-log-acc str (str/strip-colors msg) "\n")))
 
 (defn print [& args]
   (let [msg (str/join " " args)]
     (original-print msg)
-    (swap! global-log-acc str (strip-colors msg))))
+    (swap! global-log-acc str (str/strip-colors msg))))
 
 (defn dump-logs []
   (let [npkm-dir (str (os/get-home-dir) "/.npkm")
@@ -69,50 +61,13 @@
 (def win? (= *os* "windows"))
 (def mac? (= *os* "darwin"))
 
-(defn copy-dir [src dest]
-  (if win?
-    (let [res (shell/sh (str "xcopy /E /I /Y \"" src "\" \"" dest "\""))]
-      (if (= (:code res) 0) nil (throw (:stderr res))))
-    (let [res (shell/sh (str "cp -R " src " " dest))]
-      (if (= (:code res) 0) nil (throw (:stderr res))))))
 
-(defn format-date [path]
-  (if win?
-    (str/trim (:stdout (shell/sh (str "powershell -Command \"(Get-Item '" path "').LastWriteTime.ToString('o')\""))))
-    (let [res (shell/sh (str "date -r \"" path "\" '+%Y-%m-%dT%H:%M:%S%z' 2>/dev/null || stat -c %y \"" path "\" 2>/dev/null"))]
-      (str/trim (:stdout res)))))
 
 
 (defn is-bw []
   (some (fn [x] (= x "-bw")) (cli/args)))
 
-(defn walk-interp [node vars]
-  (if (map? node)
-    (loop [ks (keys node)
-           acc {}]
-      (if (empty? ks) acc
-          (recur (rest ks) (assoc acc (first ks) (walk-interp (get node (first ks)) vars)))))
-    (if (vector? node)
-      (loop [rem node
-             acc []]
-        (if (empty? rem) acc
-            (recur (rest rem) (conj acc (walk-interp (first rem) vars)))))
-      (if (string? node)
-        (let [;; Restore curly braces encoded by yaml edn-escape
-              node-dec (str/replace (str/replace node "~LCURL~" "{") "~RCURL~" "}")
-              k-list (keys vars)]
-          (loop [rem k-list
-                 curr node-dec]
-             (if (empty? rem) curr
-                 (let [k (first rem)
-                       ;; Normalize key: keyword :foo → string "foo", string "foo" → "foo"
-                       k-str (if (keyword? k) (name k) (str k))
-                       v (get vars k)
-                       curr-1 (str/replace curr (str "var." k-str) (str v))
-                       curr-2 (str/replace curr-1 (str "{{ " k-str " }}") (str v))
-                       curr-3 (str/replace curr-2 (str "{{" k-str "}}") (str v))]
-                   (recur (rest rem) curr-3)))))
-        node))))
+
 
 (defprotocol PlaybookTask
   (execute [this]))
@@ -341,13 +296,13 @@
                             (conj (:lines result) line))
               new-content (str/join "\n" final-lines)]
     
-      (print-diff content new-content path (is-bw))
+      (io/print-diff content new-content path (is-bw))
           (if (not is-dry-run) (io/write-file path new-content))
           (if is-dry-run "  skipping module execution (dry-run)" nil))
         ;; No regexp: just append the line
         (let [existing (if (io/exists? path) (io/read-file path) "")
               new-content (str existing (if (str/ends-with? existing "\n") "" "\n") line "\n")]
-          (if is-diff (print-diff existing new-content path (is-bw)))
+          (if is-diff (io/print-diff existing new-content path (is-bw)))
           (if (not is-dry-run) (io/write-file path new-content))
           (if is-dry-run "  skipping module execution (dry-run)" nil))))))
 
@@ -363,7 +318,7 @@
           content (if (io/exists? path) (io/read-file path) "")
           new-content (str/replace-regex content pattern replacement)]
 
-      (print-diff content new-content path (is-bw))
+      (io/print-diff content new-content path (is-bw))
       (if (not is-dry-run) (io/write-file path new-content))
       (if is-dry-run "  skipping module execution (dry-run)" nil))))
 
@@ -640,7 +595,7 @@
   (let [content (if (str/starts-with? raw-content "$NPKM_VAULT;1.0;AES256") 
                   (let [tmp (str "/tmp/npkm_vault_read_" (str/trim (:stdout (shell/sh "date +%s%N"))))]
                     (io/write-file tmp raw-content)
-                    (read-vault-file tmp)) 
+                    (vault/read-vault-file tmp)) 
                   raw-content)
         is-yaml (or (str/ends-with? file ".yml") (str/ends-with? file ".yaml"))
         local-cfg (if is-yaml 
@@ -668,7 +623,7 @@
 
 
 
-;; format-date is now defined via #[cfg] at the top of the file
+
 
 (def playbook-task-registry
   {:shell ShellTask
@@ -701,26 +656,8 @@
   (keys playbook-task-registry))
 
 
-(defn strip-quotes-local [s]
-  (let [t (str/trim s)]
-    (if (and (str/starts-with? t "\"") (str/ends-with? t "\""))
-      (subs t 1 (- (count t) 1))
-      (if (and (str/starts-with? t "'") (str/ends-with? t "'"))
-        (subs t 1 (- (count t) 1))
-        t))))
 
-(defn print-diff [old new path is-bw]
-  (if (not= old new)
-    (try
-      (do
-        (io/write-file "tmp/npkm_diff_old" old)
-        (io/write-file "tmp/npkm_diff_new" new)
-        (let [res (shell/sh "git diff --no-index --color tmp/npkm_diff_old tmp/npkm_diff_new")]
-          (if (> (count (:stdout res)) 0)
-            (if is-bw
-              (println "--- DIFF for" path "---\n" (strip-colors (:stdout res)))
-              (println "--- DIFF for" path "---\n" (:stdout res))))))
-      (catch e (println "PRINT-DIFF ERR:" e)))))
+
 
 (defn parse-inventory-yaml [content]
   (let [lines (str/split content "\n")]
@@ -752,7 +689,7 @@
                   (let [colon-idx (str/index-of trim-line ":")
                         k-str (str/trim (subs trim-line 0 colon-idx))
                         v-str (str/trim (subs trim-line (+ colon-idx 1) (count trim-line)))
-                        v-clean (strip-quotes-local v-str)
+                        v-clean (str/strip-quotes v-str)
 v-val v-clean
                         group-data (get acc curr-group)
                         hosts-data (:hosts group-data)
@@ -775,7 +712,7 @@ v-val v-clean
                  (read-string content)
                  (parse-inventory-yaml content)))
              (throw (str "Dynamic inventory execution failed: " (:stderr exec-res)))))
-        (let [content (read-vault-file path)
+        (let [content (vault/read-vault-file path)
               is-yaml (or (str/ends-with? path ".yml") (str/ends-with? path ".yaml"))
               data (if is-yaml
                      (parse-inventory-yaml content)
@@ -845,48 +782,13 @@ v-val v-clean
             [k v-clean])
           (recur (rest rem)))))))
 
-(defn replace-item-placeholders
-  "Recursively replaces {{ item }} and {{item}} in all string values of a data structure."
-  [node item-val]
-  (if (map? node)
-    (loop [ks (keys node) acc {}]
-      (if (empty? ks) acc
-          (recur (rest ks) (assoc acc (first ks) (replace-item-placeholders (get node (first ks)) item-val)))))
-    (if (vector? node)
-      (loop [rem node acc []]
-        (if (empty? rem) acc
-            (recur (rest rem) (conj acc (replace-item-placeholders (first rem) item-val)))))
-      (if (string? node)
-        (str/replace (str/replace node "{{ item }}" (str item-val)) "{{item}}" (str item-val))
-        node))))
 
-(defn expand-home [path]
-  (if (str/starts-with? path "~/")
-    (let [home (str/trim (:stdout (shell/sh "echo $HOME")))]
-      (str home (subs path 1)))
-    path))
 
-(defn read-vault-file [path]
-  (let [content (io/read-file path)]
-    (if (str/starts-with? content "$NPKM_VAULT;1.0;AES256")
-      (let [args (cli/args)
-            pass (let [o (str/trim (:stdout (shell/sh "echo $NPKM_VAULT_PASSWORD")))] (if (> (count o) 0) o nil))
-            pass-file (loop [i 0] (if (>= i (count args)) nil (if (= (nth args i) "--vault-pass-file") (nth args (+ i 1)) (recur (+ i 1)))))
-            real-pass (if pass pass (if (and pass-file (io/exists? pass-file)) (str/trim (io/read-file pass-file)) nil))]
-        (if (not real-pass)
-          (throw (str "File " path " is vault-encrypted, but no NPKM_VAULT_PASSWORD or --vault-pass-file provided!")))
-        (let [payload (str/trim (subs content 22 (count content)))
-              tmp (str "/tmp/npkm_vault_read_" (str/trim (:stdout (shell/sh "date +%s%N"))))]
-          (io/write-file tmp payload)
-          (let [res (shell/sh (str "cat " tmp " | openssl enc -d -aes-256-cbc -a -salt -pbkdf2 -pass pass:" real-pass))]
-            (if (= (:code res) 0)
-              (:stdout res)
-              (throw (str "Failed to decrypt vault file " path ": " (:stderr res)))))))
-      content)))
+
 
 (defn read-parsed-file [path default-val]
   (if (io/exists? path)
-    (let [content (read-vault-file path)]
+    (let [content (vault/read-vault-file path)]
       (if (str/ends-with? path ".edn")
         (read-string content)
         (read-string (yaml/yaml-to-edn content))))
@@ -917,8 +819,8 @@ v-val v-clean
                   defs-map (if (map? d-parsed) d-parsed {})]
               {:tasks tasks-vec :defaults defs-map})
             (throw (str "include_tasks: failed to clone " source ": " (:stderr res))))))
-      (let [actual-source (if (and (not (io/directory? source)) (io/directory? (str (expand-home "~/.npkm/roles/") source)))
-                            (str (expand-home "~/.npkm/roles/") source)
+      (let [actual-source (if (and (not (io/directory? source)) (io/directory? (str (io/expand-home "~/.npkm/roles/") source)))
+                            (str (io/expand-home "~/.npkm/roles/") source)
                             source)]
         (if (io/directory? actual-source)
           (let [source actual-source
@@ -1066,7 +968,7 @@ v-val v-clean
         (let [new-vars (loop [ks (keys sf-raw) acc runtime-vars]
                          (if (empty? ks) acc
                            (let [k (first ks)
-                                 v (walk-interp (get sf-raw k) runtime-vars)]
+                                 v (tpl/walk-interp (get sf-raw k) runtime-vars)]
                              (recur (rest ks) (assoc acc (keyword k) v)))))]
           (if (is-bw) (println "  ok (set_fact)\n") (println "\033[32m  ok (set_fact)\033[0m\n"))
           (swap! stats-ok inc)
@@ -1076,7 +978,7 @@ v-val v-clean
       (let [include-src (if (:include_tasks raw-task) (:include_tasks raw-task)
                           (get raw-task "include_tasks"))]
         (if include-src
-          (let [interp-src (walk-interp include-src runtime-vars)
+          (let [interp-src (tpl/walk-interp include-src runtime-vars)
                 when-clause (if (:when raw-task) (:when raw-task) (get raw-task "when"))
                 should-run (eval-when when-clause runtime-vars)
                 skip-labels? (if (empty? @target-labels) false
@@ -1139,7 +1041,7 @@ v-val v-clean
                         vars-after-block)))
                   runtime-vars))
               ;; --- normal task processing ---
-              (let [interp-raw-task (walk-interp raw-task runtime-vars)
+              (let [interp-raw-task (tpl/walk-interp raw-task runtime-vars)
                     match (get-task-match interp-raw-task)
                     mod-args (if match (second match) {})
                     when-clause (if (:when interp-raw-task) (:when interp-raw-task)
@@ -1198,7 +1100,7 @@ v-val v-clean
                           (if (empty? rem)
                             (if reg-key (assoc curr-vars reg-key outputs) curr-vars)
                             (let [item (first rem)
-                                  item-task (replace-item-placeholders interp-raw-task item)
+                                  item-task (tpl/replace-item-placeholders interp-raw-task item)
                                   result (run-single-task item-task curr-vars)
                                   changed (:changed result)
                                   notified (if (:notify interp-raw-task) (:notify interp-raw-task) (if (:notify mod-args) (:notify mod-args) nil))
@@ -1225,8 +1127,6 @@ v-val v-clean
                         (assoc (:vars result) :__notified_handlers__ new-notified)))))))))))))
 
 
-(defn clean-mermaid-text [txt]
-  (str/replace (str/replace (str txt) "\"" "'") "\n" " "))
 
 (defn doc-tasks [tasks prefix acc parent-id]
   (loop [rem tasks
@@ -1236,7 +1136,7 @@ v-val v-clean
     (if (empty? rem)
       {:acc curr-acc :last-id prev-id}
       (let [t (first rem)
-            name (if (:name t) (clean-mermaid-text (:name t)) (str "Task_" prefix "_" idx))
+            name (if (:name t) (str/clean-mermaid-text (:name t)) (str "Task_" prefix "_" idx))
             node-id (str prefix "_T" idx)
             include-src (if (:include_tasks t) (:include_tasks t) (get t "include_tasks"))
             block-tasks (if (:block t) (:block t) (get t "block"))
@@ -1322,7 +1222,7 @@ v-val v-clean
         (str acc "```\n\n")
         (let [play (first rem-plays)
               play-id (str "P" p-idx)
-              play-name (if (:name play) (clean-mermaid-text (:name play)) (str "Play_" p-idx))
+              play-name (if (:name play) (str/clean-mermaid-text (:name play)) (str "Play_" p-idx))
               play-hosts (if (:hosts play) (:hosts play) "localhost")
               play-def (str "  " play-id "[\"Play: " play-name " (hosts: " play-hosts ")\"]\n")
               tasks (if (:tasks play) (:tasks play) [])
@@ -1702,7 +1602,7 @@ v-val v-clean
     (if (some (fn [x] (or (= x "-v") (= x "-V") (= x "--version"))) flags)
       (do
         (let [exe-path ((sys-os-args) 0)
-              cdate (format-date exe-path)
+              cdate (io/file-mtime exe-path)
               display-date (if (> (count cdate) 0) cdate "unknown date")]
           (println (str "npkm version: 2.0 \"Novae\" (compiled " display-date ")")))
         (sys-exit 0))
@@ -1748,7 +1648,7 @@ v-val v-clean
               (do (println "Usage: npkm roles install <git-url> [version]") (sys-exit 1)))
             (let [repo-name (last (str/split repo-url "/"))
                   clean-name (if (str/ends-with? repo-name ".git") (subs repo-name 0 (- (count repo-name) 4)) repo-name)
-                  dest-dir (str (expand-home "~/.npkm/roles/") clean-name)]
+                  dest-dir (str (io/expand-home "~/.npkm/roles/") clean-name)]
               (if version
                 (println (str "Installing role from " repo-url " (version: " version ") into " dest-dir "..."))
                 (println (str "Installing role from " repo-url " into " dest-dir "...")))

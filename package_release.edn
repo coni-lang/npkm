@@ -65,6 +65,10 @@
                 "demo-multi-env"
                  "npkm-intellij-plugin/build/distributions/npkm-intellij-plugin-1.0.0.zip"]}
 
+  {:name "Dry-run all playbooks in dist"
+   :shell {:cmd "for f in $(find . -type f \\( -name '*.yml' -o -name '*.edn' \\)); do echo \"Dry running $f\"; ./npkm-coni --check $f; done"
+           :cwd "dist"}}
+
   {:name "Package release zip"
    :shell {:cmd "zip -r npkm-coni-release-{{ build_date }}.zip npkm-coni npkm-coni-linux npkm-coni.exe npkm-intellij-plugin-1.0.0.zip README.md npkm-features.md demo.yml demo-flow.yml demo-coni.yml demo-set-fact.yml test-playbook.edn test-playbook.yml test-loop.yml install_ollama.yml demo-multi-env/"
            :cwd "dist"}}

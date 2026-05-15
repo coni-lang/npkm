@@ -1,13 +1,14 @@
 (require "libs/str/src/str.coni" :as str)
 (require "libs/os/src/shell.coni" :as shell)
 (require "libs/os/src/io.coni" :as io)
+(require "libs/template/src/template.coni" :as tpl)
 (require "main.coni" :as engine)
 
 (deftest test-walk-interp
   "Tests the variable interpolation logic for the playbook engine"
   (let [raw-task {:name "Run a remote command" :shell {:cmd "echo \"Variable from inventory is {{ my_var }}\""}}
         runtime-vars {"my_var" "hello world!" "__connection__" {"host" "127.0.0.1"}}
-        interp (engine/walk-interp raw-task runtime-vars)]
+        interp (tpl/walk-interp raw-task runtime-vars)]
     (is (= "Run a remote command" (:name interp)))
     (is (= "echo \"Variable from inventory is hello world!\"" (:cmd (:shell interp))))))
 
