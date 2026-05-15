@@ -1680,29 +1680,13 @@ v-val v-clean
                 (let [content (io/read-file target-file)
                       _ (if (str/starts-with? content "$NPKM_VAULT;1.0;AES256") (do (println "File is already encrypted.") (sys-exit 0)))]
                   (println "Encrypting" target-file "...")
-                  (let [tmp (str "/tmp/npkm_vault_" (str/trim (:stdout (shell/sh "date +%s%N"))))]
-                    (io/write-file tmp content)
-                    (let [res (shell/sh (str "cat " tmp " | openssl enc -aes-256-cbc -a -salt -pbkdf2 -pass pass:" real-pass))]
-                      (if (= (:code res) 0)
-                        (do
-                           (io/write-file target-file (str "$NPKM_VAULT;1.0;AES256
-" (:stdout res)))
-                           (println "Encryption successful."))
-                        (println "Encryption failed:" (:stderr res))))))
+                  (vault/encrypt-file target-file real-pass)
+                  (println "Encryption successful."))
                 (if (= action "decrypt")
-                  (let [content (io/read-file target-file)]
-                    (if (not (str/starts-with? content "$NPKM_VAULT;1.0;AES256"))
-                      (do (println "File is not encrypted with NPKM_VAULT.") (sys-exit 0)))
+                  (do
                     (println "Decrypting" target-file "...")
-                    (let [payload (str/trim (subs content 22 (count content)))
-                          tmp (str "/tmp/npkm_vault_" (str/trim (:stdout (shell/sh "date +%s%N"))))]
-                      (io/write-file tmp payload)
-                      (let [res (shell/sh (str "cat " tmp " | openssl enc -d -aes-256-cbc -a -salt -pbkdf2 -pass pass:" real-pass))]
-                        (if (= (:code res) 0)
-                          (do
-                             (io/write-file target-file (:stdout res))
-                             (println "Decryption successful."))
-                          (println "Decryption failed:" (:stderr res))))))
+                    (vault/decrypt-file target-file real-pass)
+                    (println "Decryption successful."))
                   (println "Unknown vault action:" action)))))
           (sys-exit 0)))
       ;; --- npkm init ---
