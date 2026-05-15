@@ -1,351 +1,317 @@
-# NPKM (Nicolas's Playbook Kit Manager)
+# NPKM — Nuke Playbook Kit Manager
 
-NPKM is a lightweight, declarative automation and provisioning tool (similar to Ansible or Chef), designed for zero-friction environment bootstrapping. It is written natively in the **Coni** programming language, featuring a custom YAML-to-EDN parser and cross-platform native execution.
+> A native, zero-dependency automation engine written in **Coni**. Deploy, provision, and orchestrate infrastructure with full Ansible parity — and capabilities beyond it.
 
-## Core Features
-
-- **Cross-OS Build**: Compiles entirely to standalone native binaries (`.exe` and `Mach-O`).
-- **YAML Support**: Natively transforms Ansible-style tasks via its zero-dependency `yaml-to-edn` parser.
-- **Remote HTTP Playbooks**: Can run playbooks directly via URL.
-- **Git Repositories**: Scans cloned repos for playbook yaml/edn (`git clone`).
-- **Directory Scanning**: Recursively lists available playbook files.
-- **Global Configs**: Interpolation from `config:` blocks into `config.*` variables.
-- **Remote SSH Orchestration**: Embedded SSH client allows running playbooks on remote hosts via `inventory.yml`.
-- **Conditional Execution**: Support for `when` clauses to target specific OS platforms or custom conditions.
+---
 
 ## Release History
 
-### v1.6 "Flow Control" (Latest)
-- **Advanced Flow Control**: Full support for `block`, `rescue`, and `always` error-handling structures to manage failure scenarios gracefully.
-- **Handlers & Notifications**: Trigger state-dependent `handlers` seamlessly via the `notify` keyword.
-- **Parallel Host Execution**: Configure simultaneous SSH deployment via the `forks` parameter, scaling seamlessly with native goroutines.
+### v1.6 "Sentinel" _(Latest)_
+- **[Role Package Manager](#roles--package-manager)**: Install reusable automation roles from any Git repository with `npkm roles install`
+- **[Project Scaffolding](#project-scaffolding-npkm-init)**: Scaffold a complete project skeleton with `npkm init`
+- **[Static Analysis](#static-analysis-npkm-lint)**: Validate playbooks before running with `npkm lint`
+- **[Watch Mode](#watch-mode-npkm-watch)**: Auto re-run playbooks on file change with `npkm watch`
+- **[Interactive Step Mode](#interactive-step-mode---step)**: Execute tasks one-by-one with confirmation via `--step`
+- **[Execution Reports](#execution-reports---report)**: Generate JSON + HTML audit reports via `--report`
+- **[Run History](#run-history)**: Browse and diff past execution logs with `npkm run history`
+- **[`set_fact` module](#set_fact)**: Inject runtime variables mid-playbook
+- **[`test` module](#test)**: Inline TDD-style assertions on task output
+- **Keyword var interpolation**: `:vars {:key val}` in `include_tasks` now correctly resolves `{{ key }}` templates
+- **Multi-line command safety**: SSH commands with `&&` in block scalars now execute correctly on Debian/Ubuntu (`dash`)
 
 ### v1.5 "Quantum Weaver"
-- **[Native Templating (Variables & Loops)](#native-templating-variables--loops)**: Context-aware template injection using global configs, host vars, and loop iteration.
-- **[Multi-Play Architecture](#multi-play-architecture-multiple-servers)**: Deploy to multiple, different servers within a single playbook run.
-- **[Documentation Generation](#documentation-generation)**: Auto-generate markdown and Mermaid graphs (`--doc`).
-- **[Task Filtering](#task-filtering--labels-and---names)**: Isolate tasks via `--labels` or `--names`.
-- **[Background Logging](#automatic-background-logging)**: Automatically capture cleanly stripped execution logs.
+- Native Templating (Variables & Loops), Multi-Play Architecture, Documentation Generation (`--doc`), Task Filtering (`--labels`, `--names`), Background Logging
 
-## Supported Tasks
+### v1.4 "Flow Control"
+- `block` / `rescue` / `always`, Handlers & Notifications, Parallel Host Execution (`forks`)
 
-| Task | Description |
-| :--- | :--- |
-| `file` | directory, touch, link, absent, modes |
-| `lineinfile` | Regex matching & replacement in streams |
-| `replace` | Replaces all instances of a regex pattern |
-| `path` | Modifies the system PATH environment variable |
-| `systemd` | start, stop, restart daemons |
-| `copy`, `move`, `remove` | Standard IO primitives |
-| `get_url` / `unzip` | Downloads and extracts remote assets |
-| `shell`, `command`, `powershell`| Shell integration along with inline Powershell |
-| `debug`, `fail` | Playbook execution logic and output |
-| `package` | Auto-detects brew, apt-get, yum, winget, or choco |
-| `service` | Generalizes systemctl, launchctl, and net start |
-| `cron` | UNIX crontab -l / - insertion & absent state |
-| `user` | Integrates useradd, sysadminctl, net user |
-| `archive` | Native `zip` operations without shell dependencies |
-| `template` | Deploy templated files with mapped configuration properties |
-| `include_tasks` | Include & execute tasks from a local file, directory, or git repo |
-| `coni` | Execute inline Coni scripts natively within the playbook runtime |
+---
 
-## Task Reference & Examples
+## Core Features
 
-### `file`
-Manage the state of a file, directory, or symlink.
-```yaml
-- name: Ensure configuration directory exists
-  file:
-    path: /etc/myapp
-    state: directory
-    mode: 0755
+- **Cross-platform binary**: Single static binary for macOS, Linux, and Windows — no Python, JVM, or runtime required
+- **YAML + EDN**: Full Ansible-style YAML support alongside native EDN format
+- **SSH orchestration**: Built-in SSH client for remote host execution
+- **Vault encryption**: AES-256-CBC file encryption with transparent runtime decryption
+- **Dynamic inventory**: Executable scripts auto-detected alongside static YAML/EDN/INI inventories
+- **Role system**: Reusable, Git-versioned automation modules
+- **Zero dependencies**: No pip install, no requirements.txt, no Galaxy account
+
+---
+
+## Quick Start
+
+```bash
+# Run a playbook locally
+npkm playbook.yml
+
+# Run against remote hosts over SSH
+npkm -i inventory.yml playbook.yml
+
+# Scaffold a new project
+npkm init my-project/
+
+# Validate before running
+npkm lint playbook.yml
+
+# Watch for changes and re-run automatically
+npkm watch -i inventory.yml playbook.yml
 ```
 
-### `copy`
-Copy an existing file or directory directly to a specified path.
-```yaml
-- name: Copy deployment artifact
-  copy:
-    src: ./build/app.jar
-    dest: /opt/myapp/app.jar
+---
+
+## Roles — Package Manager
+
+Roles are reusable, Git-versioned task collections. Install them from any Git repository and reference them in your playbooks via `include_tasks`.
+
+### Installing a role
+
+```bash
+# Install from a Git repo — cloned into ~/.npkm/roles/<repo-name>/
+npkm roles install git@github.com:myorg/nginx-role.git
+
+# Install a specific version (tag or branch)
+npkm roles install git@gitlab.example.com:sys/binet.git --version v1.2.0
 ```
 
-### `move` / `remove`
-Rename, move, or completely delete elements on the disk.
-```yaml
-- name: Rename old log
-  move:
-    src: /var/log/app.log
-    dest: /var/log/app.old.log
+Roles are stored in `~/.npkm/roles/`. Each role follows this layout:
 
-- name: Wipe temporary backups
-  remove:
-    path: /tmp/backups/*
+```
+~/.npkm/roles/
+  nginx-role/
+    tasks/
+      main.edn       ← entry point (flat list of tasks)
+    defaults/
+      main.edn       ← default variable values
 ```
 
-### `get_url` & `unzip`
-Download remote assets and seamlessly extract them to the system.
-```yaml
-- name: Download web app
-  get_url:
-    url: https://github.com/user/repo/archive/main.zip
-    dest: /tmp/app.zip
+### Using a role in a playbook
 
-- name: Extract zip archive
-  unzip:
-    src: /tmp/app.zip
-    dest: /var/www/html/
+Reference an installed role with `include_tasks:` pointing to the role name under `roles/`:
+
+```yaml
+# smb_share.yml
+- name: Setup Samba share
+  hosts: biner3
+  tasks:
+    - name: Install and configure Samba
+      include_tasks: roles/samba
+      vars:
+        share_name:  "MY_SHARE"
+        share_path:  "/mnt/data/samba/my_share"
+        smb_user:    "alice"
+        smb_comment: "Production data share"
 ```
 
-### `archive`
-Compress local paths natively into an archive (without shell tools).
-```yaml
-- name: Backup web directory
-  archive:
-    src: /var/www/html/
-    dest: /backups/html_backup.zip
+Or in EDN format:
+
+```edn
+{:name "Setup Samba share on biner3"
+ :hosts "biner3"
+ :tasks [{:name "Install and configure Samba"
+          :include_tasks "roles/samba"
+          :vars {:share_name  "MY_SHARE"
+                 :share_path  "/mnt/data/samba/my_share"
+                 :smb_user    "alice"
+                 :smb_comment "Production data share"}}]}
 ```
 
-### `package`
-Automatically manage OS packages. Will intelligently resolve `brew`, `apt-get`, `yum`, `winget`, or `choco` depending on the platform.
-```yaml
-- name: Install Git
-  package:
-    name: git
-    state: present
+### Role defaults
+
+Variables defined in `defaults/main.edn` act as fallbacks — overridden by anything passed in `:vars`:
+
+```edn
+; defaults/main.edn
+{:share_name  "DEFAULT_SHARE"
+ :smb_user    "guest"
+ :smb_password "changeme"}
 ```
 
-### `service` & `systemd`
-Manage system-level daemons natively (`systemctl`, `launchctl`, or `net start`).
-```yaml
-- name: Enable and start Nginx
-  service:
-    name: nginx
-    state: started
-    enabled: true
+### Role task file format
 
-- name: Stop multiple units simultaneously (e.g., to prevent socket activation warnings)
-  systemd:
-    name: syslog.socket rsyslog.service
-    state: stopped
+`tasks/main.edn` must be a **flat vector of tasks** (no `:hosts` or play wrapping):
+
+```edn
+[
+  {:name "Install samba" :become true :shell {:cmd "apt-get install -y samba"}}
+  {:name "Start smbd"    :become true :systemd {:name "smbd" :state "restarted" :enabled true}}
+]
 ```
 
-### `shell`, `command` & `powershell`
-Execute raw OS-dependent instructions.
-```yaml
-- name: Run raw bash script
-  shell:
-    cmd: "rm -rf /tmp/cache && echo 'Cleared'"
-    cwd: /tmp/
+---
 
-- name: Run Windows powershell instruction
-  powershell:
-    inline: "Get-Process | Where-Object {$_.Name -eq 'node'} | Stop-Process"
+## Project Scaffolding (`npkm init`)
+
+Scaffold a ready-to-run project structure in one command:
+
+```bash
+npkm init my-project/
 ```
 
-### `lineinfile` & `replace`
-Modify and parse file streams based on regex.
-```yaml
-- name: Ensure memory limit is correct
-  lineinfile:
-    path: /etc/php.ini
-    regexp: "^memory_limit="
-    line: "memory_limit=512M"
+Creates:
 
-- name: Swap default port anywhere in config
-  replace:
-    path: /opt/app/config.json
-    regexp: "8080"
-    replace: "9000"
+```
+my-project/
+  main.edn          ← main playbook
+  inventory.edn     ← host inventory
+  group_vars/
+    all.edn         ← shared variables
+  tasks/
+    setup.edn       ← example task file
+  roles/            ← role directory
 ```
 
-### `path`
-Append a directory natively to the global OS `$PATH` configuration.
-```yaml
-- name: Install java to path
-  path:
-    path: /opt/java/bin
+---
+
+## Static Analysis (`npkm lint`)
+
+Validate playbook structure before executing — catches missing required fields, unknown modules, and structural issues:
+
+```bash
+npkm lint playbook.yml
+npkm lint smb_share.edn
+
+# Example output:
+# ⬡ Linting: smb_share.edn
+# ✓ No issues found.
 ```
 
-### `user` & `cron`
-Manage system-level profiles and periodic tasks.
-```yaml
-- name: Add worker user
-  user:
-    name: worker
-    state: present
+---
 
-- name: Setup midnight backup
-  cron:
-    name: "DB Backup"
-    state: present
-    job: "0 0 * * * /opt/backup.sh"
+## Watch Mode (`npkm watch`)
+
+Monitor your playbook and inventory files for changes and re-run automatically — ideal during active role or playbook development:
+
+```bash
+# Watch a playbook (re-runs on any file change)
+npkm watch playbook.yml
+
+# Watch with a remote inventory
+npkm watch -i inventory.edn smb_share.edn
+
+# Example output:
+# ⬡ NPKM Watch Mode — watching: smb_share.edn, inventory.edn
+#   Press Ctrl+C to stop.
+#
+# [watch] Change detected — re-running playbook... (run #1)
 ```
 
-### `debug` & `fail`
-Provide real-time execution outputs or forcefully term execution conditions.
+---
+
+## Interactive Step Mode (`--step`)
+
+Execute tasks one at a time with an interactive prompt — ideal for high-risk or first-time runs:
+
+```bash
+npkm --step -i inventory.yml deploy.yml
+```
+
+```
+TASK [ Install nginx ]
+  → Run this task? [y/n/q]:
+```
+
+- `y` — run the task and continue
+- `n` — skip this task
+- `q` — quit execution immediately
+
+---
+
+## Execution Reports (`--report`)
+
+Generate a timestamped JSON + dark-themed HTML execution report in `~/.npkm/reports/` after every run:
+
+```bash
+npkm --report -i inventory.yml playbook.yml
+
+# --- NPKM Run Report ---
+#   ok=12 changed=4 failed=0 skipped=1 duration=8s
+#   JSON: ~/.npkm/reports/2026-05-15_09-45-00.json
+#   HTML: ~/.npkm/reports/2026-05-15_09-45-00.html
+```
+
+---
+
+## Run History
+
+Browse, inspect, and diff past execution logs stored in `~/.npkm/logs/`:
+
+```bash
+# List all past runs
+npkm run history
+
+# Show the most recent log
+npkm run history last
+
+# Diff the last two runs
+npkm run history diff
+```
+
+---
+
+## New Modules (v1.6)
+
+### `set_fact`
+
+Inject variables into the runtime environment mid-playbook — available to all subsequent tasks:
+
 ```yaml
-- name: Print variables
+- name: Compute paths
+  set_fact:
+    app_root: "/opt/myapp"
+    log_dir:  "/var/log/myapp"
+
+- name: Use the variable
   debug:
-    msg: "Current root path is {{ config.root }}"
-
-- name: Stop on unsupported OS
-  fail:
-    msg: "Halting execution: OS not supported."
+    msg: "App root is {{ app_root }}"
 ```
 
-### `include_tasks`
-Dynamically include a list of tasks from a separate `.yml` file, a local directory (first `.yml` found), or a remote git repository. Combine with `when:` to load tasks conditionally.
+### `test`
 
-**Local file:**
-```yaml
-tasks:
-  - name: Include web server setup
-    include_tasks: tasks/web_tasks.yml
-    when: "ansible_os_family == 'Unix'"
-```
-
-**Local directory (first `.yml` file is used):**
-```yaml
-tasks:
-  - name: Include all tasks in the db folder
-    include_tasks: tasks/database/
-```
-
-**Remote git repository:**
-```yaml
-tasks:
-  - name: Pull shared tasks from private repo
-    include_tasks: git@github.com:myorg/common-tasks.git
-    when: "env == 'production'"
-```
-
-The included file must be a flat YAML list of tasks (no `hosts:` or `plays:` wrapping):
-```yaml
-# web_tasks.yml
-- name: Install nginx
-  package:
-    name: nginx
-    state: present
-
-- name: Start nginx
-  service:
-    name: nginx
-    state: started
-```
-
-### Flow Control & Error Handling
-NPKM natively supports Ansible-style `block`, `rescue`, and `always` task groupings for sophisticated error recovery and cleanup.
+Inline TDD-style assertions on task command output — fail fast if expectations aren't met:
 
 ```yaml
-tasks:
-  - name: Unstable operations
-    block:
-      - name: "Attempt download"
-        get_url:
-          url: "http://example.com/unstable"
-          dest: "/tmp/file"
-    rescue:
-      - name: "Fallback: Create local file"
-        shell:
-          cmd: "echo 'Fallback data' > /tmp/file"
-    always:
-      - name: "Always block executed"
-        debug:
-          msg: "Proceeding with playbook execution."
+- name: Assert samba is running
+  test:
+    cmd: "systemctl is-active smbd"
+    expect: "active"
+
+- name: Assert share is accessible
+  test:
+    cmd: "smbclient -L localhost -N"
+    contains: "MY_SHARE"
 ```
 
-### Handlers & State Notification
-Tie actions exclusively to state changes using the `notify` and `handlers` mechanism.
+---
 
-```yaml
-tasks:
-  - name: "Update configuration file"
-    copy:
-      src: "nginx.conf"
-      dest: "/etc/nginx/nginx.conf"
-    notify: "Restart Nginx"
+## Supported Modules
 
-handlers:
-  - name: "Restart Nginx"
-    service:
-      name: nginx
-      state: restarted
-```
+| Module | Description |
+|---|---|
+| `shell`, `command` | Execute shell commands |
+| `powershell` | Windows PowerShell execution |
+| `file` | Manage files, directories, symlinks |
+| `copy`, `move`, `remove` | File I/O primitives |
+| `lineinfile`, `replace` | Regex-based file modification |
+| `template` | Render templated config files |
+| `get_url` | Download remote files |
+| `archive`, `unzip` | Compress / extract |
+| `package` | brew / apt / yum / winget / choco |
+| `service`, `systemd` | Manage system daemons |
+| `user` | Create / remove system users |
+| `cron` | Manage crontab entries |
+| `git` | Clone or pull repositories |
+| `path` | Modify `$PATH` |
+| `debug`, `fail` | Output and control flow |
+| `include_tasks` | Load tasks from file, directory, or Git |
+| `block` / `rescue` / `always` | Error handling and cleanup |
+| `coni` | Inline Coni scripts with full playbook context |
+| `set_fact` | Inject runtime variables |
+| `test` | Inline assertions on command output |
 
-### Native Coni Scripts (`coni:`)
-You can natively execute inline scripts written in Coni. The runtime intelligently injects the current execution context directly into your script as a map named `vars`, enabling you to interact with playbook variables without complex string templating.
-
-```yaml
-tasks:
-  - name: "Generate timestamp"
-    shell:
-      cmd: "date"
-    register: system_date
-
-  - name: "Manipulate data natively"
-    coni:
-      script: |
-        (require "libs/os/src/io.coni" :as io)
-        (let [date-val (get vars "system_date")]
-          (println "The date is:" date-val)
-          (io/write-file "/tmp/native-log.txt" (str "Logged on: " date-val))
-          "Operation completed successfully")
-    register: coni_result
-```
-
-## Global Configuration Interpolation
-
-NPKM supports dynamic global string replacement. You can define variables in an inline `config:` block at the top of your playbook (or placed alongside it as a separate `config.yml`), and they will be injected wherever `config.your_key` is referenced in the tasks.
-
-```yaml
-config:
-  deploy_path: /opt/production
-  service_user: nginx
-
-tasks:
-  - name: Ensure deployment directory exists
-    file:
-      path: config.deploy_path
-      state: directory
-```
-
-## Conditional Execution (OS Detection)
-
-NPKM provides built-in conditional execution using the `when:` clause. It automatically populates the `ansible_os_family` runtime variable (`Unix` or `Windows`) for both local and remote executions.
-
-```yaml
-tasks:
-  - name: Install dependencies on Linux/macOS
-    shell:
-      cmd: curl -fsSL https://example.com/install.sh | sh
-    when: "ansible_os_family == 'Unix'"
-
-  - name: Install dependencies on Windows
-    powershell:
-      inline: irm https://example.com/install.ps1 | iex
-    when: "ansible_os_family == 'Windows'"
-```
-
-## Privilege Escalation (become / sudo)
-
-If a task requires root privileges on a Linux or macOS target (e.g., restarting a system daemon or installing a package), you can use the `become: true` flag. This will automatically prefix the command with `sudo`.
-
-```yaml
-tasks:
-  - name: Restart rsyslog using systemd
-    become: true
-    systemd:
-      name: rsyslog
-      state: restarted
-      enabled: true
-```
-
-**Note on passwords:** NPKM currently executes SSH commands non-interactively and does not pause to prompt for a sudo password. If your remote user requires a password to use `sudo`, the command will fail. To use `become: true`, you must configure your target machine's `/etc/sudoers` file to allow passwordless sudo for the user (e.g., `ubuntu ALL=(ALL) NOPASSWD:ALL`).
+---
 
 ## Remote SSH Orchestration (Inventories)
-
-NPKM allows you to execute your playbooks seamlessly over SSH to remote targets using an `inventory.yml` file. Just provide the inventory alongside your playbook!
 
 ```yaml
 # inventory.yml
@@ -353,213 +319,106 @@ all:
   hosts:
     server1:
       ansible_host: 192.168.1.10
-      ansible_user: root
-      ansible_ssh_pass: "mysecret"                   # Optional: Password authentication
-      ansible_ssh_private_key_file: "~/.ssh/id_rsa"  # Optional: SSH Key authentication
+      ansible_user: ubuntu
+      ansible_ssh_private_key_file: "~/.ssh/id_rsa"
       ansible_port: 22
 ```
 
-In your playbook, define `hosts: all` or explicitly target `hosts: server1`:
-
-```yaml
-# playbook.yml
-name: Deploy Web Server
-hosts: server1
-
-tasks:
-  - name: Install nginx
-    package:
-      name: nginx
-      state: present
-```
-
-Execute by passing the inventory file using the `-i` flag to run via SSH:
 ```bash
-# Run a playbook on remote hosts via SSH
-./npkm-coni -i inventory.yml playbook.yml
-
-# Example: Run the bundled install_ollama.yml on your remote SSH inventory
-./npkm-coni -i inventory.yml install_ollama.yml
+npkm -i inventory.yml playbook.yml
 ```
 
-## Advanced Features
+---
 
-### Loops & Iteration
-NPKM supports native task iteration using `with_items` and `loop` constructs. You can loop over inline lists or variables defined in your configuration, and dynamically interpolate the `{{ item }}` reference throughout your task properties.
-
-**Using `with_items` (Inline List):**
-```yaml
-tasks:
-  - name: Install required packages
-    package:
-      name: "{{ item }}"
-      state: present
-    with_items:
-      - curl
-      - git
-      - docker
-```
-
-**Using `loop` (Variable Reference):**
-```yaml
-config:
-  app_files:
-    - index.html
-    - app.js
-    - style.css
-
-tasks:
-  - name: Copy app files
-    copy:
-      src: "./src/{{ item }}"
-      dest: "/var/www/html/{{ item }}"
-    loop: config.app_files
-```
-
-### Advanced Templating & Nesting
-The YAML parser perfectly maps complex YAML structures into nested dictionaries. You can use the `template` task to inject a full dictionary of key-value pairs (using the `vars:` map) into your configuration templates seamlessly:
+## Flow Control & Error Handling
 
 ```yaml
 tasks:
-  - name: Configure Nginx Site
-    template:
-      src: ./templates/nginx.conf.j2
-      dest: /etc/nginx/nginx.conf
-      vars:
-        port: 8080
-        server_name: mysite.local
-        worker_processes: 4
+  - name: Risky operations
+    block:
+      - name: Download artifact
+        get_url:
+          url: "http://example.com/artifact"
+          dest: "/tmp/artifact"
+    rescue:
+      - name: Use fallback
+        shell:
+          cmd: "echo 'fallback' > /tmp/artifact"
+    always:
+      - name: Cleanup
+        debug:
+          msg: "Run complete."
 ```
 
-# Usage
+---
 
-Provide a single local YAML/EDN file, a directory containing playbooks, a mix of files and folders, a remote HTTP/HTTPS link, or an SSH/Git path. When you pass a directory, NPKM recursively lists and evaluates all playbook files inside it!
+## Vault Encryption
+
+Encrypt secrets at rest, decrypt transparently at runtime:
 
 ```bash
-# Run a specific local playbook
-./npkm-coni test-playbook.yml
+# Encrypt a file
+npkm vault encrypt secrets.edn
 
-# Run with verbose debugging output (prints exact command executions, exit codes, and stdout/stderr)
-./npkm-coni --verbose test-playbook.yml
+# Decrypt for inspection
+npkm vault decrypt secrets.edn.vault
 
-# Run all playbooks inside a directory
-./npkm-coni ./playbooks/
-
-# Mix and match individual files and folders at the same time
-./npkm-coni deploy-web.yml ./database_setup/ ./monitoring/
-
-# Clone from Git and run
-./npkm-coni ssh://git@s5:2222/hellonico/my-playbook.git
-
-# Run directly from a remote web server
-./npkm-coni https://raw.githubusercontent.com/user/npkm/main/playbook.yml
+# Runtime: set the password via environment variable
+export NPKM_VAULT_PASSWORD=mysecret
+npkm -i inventory.yml playbook.yml
 ```
 
-# Playbook Features
-
-## Native Templating (Variables & Loops)
-
-NPKM-Coni ships with a robust, context-aware templating engine. The `template:` module automatically merges your global configuration, your runtime environment, and your host-specific variables and exposes them to your template files.
-
-You can define variables directly beneath your hosts in your `inventory.yml`:
-
-```yaml
-web_servers:
-  hosts:
-    server1:
-      ansible_host: 10.0.0.1
-      # Custom host variables:
-      listen_port: 8080
-      worker_processes: 4
-```
-
-Then, you can loop over an array of templates using the `loop:` directive. The engine will transparently inject your host variables (like `{{ listen_port }}`), global configuration variables (like `{{ config.domain }}`), and the built-in host target (`{{ inventory_hostname }}`) right into your `.j2` template files without requiring you to manually pass them inside the playbook!
-
-```yaml
-config:
-  domain: mysite.com
-
-tasks:
-  - name: Render service configurations
-    template:
-      src: "templates/{{ item }}.conf.j2"
-      dest: "/etc/services/{{ item }}.conf"
-    loop:
-      - web
-      - db
-      - api
-```
-
-Inside your `templates/web.conf.j2` file, you can freely use the context variables:
-
-```nginx
-server_name {{ inventory_hostname }};
-domain {{ config.domain }};
-port {{ listen_port }};
-workers {{ worker_processes }};
-```
-
-## Multi-Play Architecture (Multiple Servers)
-
-You can define multiple, independent plays within a single YAML playbook, allowing you to deploy to completely different servers sequentially in a single execution! 
-
-The built-in parser relies on standard Ansible indentation to dynamically separate plays. Define your distinct plays at the root indentation (`0` spaces), and assign their target `hosts:` and `tasks:` blocks immediately beneath them.
-
-```yaml
-- name: Common Setup
-  hosts: all
-  tasks:
-    - name: Ensure baseline tools are installed
-      package:
-        name: [git, vim]
-
-- name: Web Setup
-  hosts: web_servers
-  tasks:
-    - name: Start nginx
-      systemd:
-        name: nginx
-        state: started
-```
-
-In the above example, NPKM natively evaluates the first play against the `all` group in your inventory, and then seamlessly pivots its connection context to run the second play strictly against `web_servers`.
-
-*(Note: Legacy single-play YAML playbooks that omit root plays are fully backward compatible and execute automatically inside a implicit "Default Play".)*
+---
 
 ## Documentation Generation
 
-You can automatically generate Markdown documentation with Mermaid graphs for your playbooks and inventory using the `--doc` flag. The generator also automatically extracts configuration variables and lists them in a dedicated Markdown table!
-
 ```bash
-# Generate documentation for a playbook and print to stdout
-./npkm-coni --doc test-playbook.yml
+# Generate Mermaid flowchart + task table to stdout
+npkm --doc playbook.yml
 
-# Generate documentation for multiple playbooks with an inventory and save to a file
-./npkm-coni -i inventory.yml --doc web.yml db.yml > doc.md
+# Save to file
+npkm -i inventory.yml --doc deploy.yml > docs/deploy.md
 ```
 
-## Task Filtering (`--labels` and `--names`)
+---
 
-You can isolate and conditionally execute specific parts of your playbooks using task filtering, similar to Ansible's tags. 
-
-If you use `--labels`, the engine will only run tasks containing a matching tag in their `:labels` array. With `--names`, it executes tasks that match exactly.
+## Usage Reference
 
 ```bash
-# Only run tasks with the "db" label
-./npkm-coni test-playbook.yml --labels db
+npkm [options] <playbook.yml | directory | https://... | git@...>
 
-# Run tasks labeled either "db" or "setup"
-./npkm-coni test-playbook.yml --labels db,setup
+Options:
+  -v                    print version
+  -h                    show help
+  --doc                 generate Mermaid documentation
+  --dry-run, --check    simulate without making changes
+  --diff                show file diffs
+  --report              generate HTML + JSON execution report
+  --step                interactive task-by-task confirmation
+  --labels <csv>        run only tasks matching labels
+  --names  <csv>        run only tasks matching names
+  -i <file>             inventory file
+  -bw                   disable color output
 
-# Only run the task explicitly named "Setup DB"
-./npkm-coni test-playbook.yml --names "Setup DB"
+Commands:
+  npkm init [dir]                scaffold a new project
+  npkm lint <playbook>           static analysis
+  npkm watch <playbook>          re-run on file change
+  npkm run history               list past run logs
+  npkm run history last          show most recent log
+  npkm run history diff          diff last two runs
+  npkm roles install <git-url>   install a role from Git
+  npkm vault encrypt <file>      encrypt with AES-256
+  npkm vault decrypt <file>      decrypt vault file
 ```
 
-## Automatic Background Logging
+---
 
-NPKM-Coni automatically records and archives the output of every playbook execution natively! 
+## Directory Layout
 
-Every time you run the tool, your complete execution trace is intercepted in the background. Once the run finishes (or upon failure), the logs are automatically stripped of ANSI color codes and saved as a plain-text log inside your local `~/.npkm/` directory.
-
-- **Log Path Format:** `~/.npkm/YYYY-MM-DD_HH-MM-SS.log`
-- **Clean output:** The log preserves all standard output minus the terminal color formatting for perfect readability in text editors.
+```
+~/.npkm/
+  logs/       ← timestamped execution logs (auto-created)
+  reports/    ← JSON + HTML reports (--report)
+  roles/      ← installed roles (npkm roles install)
+```
