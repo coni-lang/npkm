@@ -105,10 +105,12 @@
                  curr node-dec]
              (if (empty? rem) curr
                  (let [k (first rem)
+                       ;; Normalize key: keyword :foo → string "foo", string "foo" → "foo"
+                       k-str (if (keyword? k) (name k) (str k))
                        v (get vars k)
-                       curr-1 (str/replace curr (str "var." k) (str v))
-                       curr-2 (str/replace curr-1 (str "{{ " k " }}") (str v))
-                       curr-3 (str/replace curr-2 (str "{{" k "}}") (str v))]
+                       curr-1 (str/replace curr (str "var." k-str) (str v))
+                       curr-2 (str/replace curr-1 (str "{{ " k-str " }}") (str v))
+                       curr-3 (str/replace curr-2 (str "{{" k-str "}}") (str v))]
                    (recur (rest rem) curr-3)))))
         node))))
 
