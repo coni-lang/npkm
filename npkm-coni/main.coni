@@ -1702,7 +1702,9 @@ v-val v-clean
             (sys-http-serve port (fn [req]
                {:status 200
                 :headers {"Content-Type" "text/html"}
-                :body doc/npkm-readme})))
+                :body doc/npkm-readme}))
+            (println "Press Enter to stop the server...")
+            (sys-read-line))
           (sys-exit 0)))
       ;; --- npkm init ---
       (if (= (first pos-args-clean) "init")
