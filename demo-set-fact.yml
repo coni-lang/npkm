@@ -1,0 +1,61 @@
+
+# ============================================================
+#  NPKM set_fact Demo
+#  Shows how to set a variable in one task and use it in others.
+#
+#  Run:  npkm demo-set-fact.yml
+# ============================================================
+
+config:
+  app_name: my-app
+
+tasks:
+
+  # ── 1. Set a runtime variable ────────────────────────────
+  - name: Set version
+    set_fact:
+      version: "1.2.3"
+      deploy_dir: "tmp/releases/1.2.3"
+
+  # ── 2. Use the variable in debug ─────────────────────────
+  - name: Announce deploy
+    debug:
+      msg: "Deploying ${app_name} version ${version}"
+
+  # ── 3. Use the variable in file creation ─────────────────
+  - name: Create release directory
+    file:
+      path: "${deploy_dir}"
+      state: directory
+
+  # ── 4. Use the variable in a shell command ───────────────
+  - name: Write release notes
+    shell:
+      cmd: "echo 'Release ${version}' > ${deploy_dir}/RELEASE.txt"
+
+  # ── 5. Override a variable mid-playbook ──────────────────
+  - name: Override version for hotfix
+    set_fact:
+      version: "1.2.4-hotfix"
+
+  - name: Announce hotfix
+    debug:
+      msg: "Now deploying hotfix: ${version}"
+
+  # ── 6. Derived variables can reference earlier set_facts ──
+  - name: Set archive name
+    set_fact:
+      archive_name: "tmp/${app_name}-${version}.zip"
+
+  - name: Ensure tmp directory exists
+    file:
+      path: "tmp"
+      state: directory
+
+  - name: Archive release
+    shell:
+      cmd: "zip -r ${archive_name} ${deploy_dir}"
+
+  - name: Done
+    debug:
+      msg: "Archive ready at ${archive_name}"
