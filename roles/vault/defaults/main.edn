@@ -1,0 +1,8 @@
+{:vault_version "1.15.2"
+ :vault_url "https://releases.hashicorp.com/vault/{{ vault_version }}/vault_{{ vault_version }}_linux_amd64.zip"
+ :vault_user "vault"
+ :vault_group "vault"
+ :vault_dir "/opt/vault"
+ :vault_data_dir "/opt/vault/data"
+ :vault_tls_disable "true"
+ :vault_api_addr "http://127.0.0.1:8200"}
