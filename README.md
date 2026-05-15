@@ -254,21 +254,23 @@ npkm run history diff
 
 ---
 
-## New Modules (v1.6)
+## New Modules (v2.0 & v1.6)
 
 ### `set_fact`
 
-Inject variables into the runtime environment mid-playbook — available to all subsequent tasks:
+Inject variables into the runtime environment mid-playbook. These variables are immediately available to all subsequent tasks using the new `${var}` or `{{ var }}` syntax.
+
+You can even chain variables, referencing previously defined facts!
 
 ```yaml
 - name: Compute paths
   set_fact:
     app_root: "/opt/myapp"
-    log_dir:  "/var/log/myapp"
+    log_dir:  "${app_root}/logs"
 
 - name: Use the variable
   debug:
-    msg: "App root is {{ app_root }}"
+    msg: "App root is ${app_root} and logs go to ${log_dir}"
 ```
 
 ### `test`
