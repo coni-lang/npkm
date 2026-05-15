@@ -6,7 +6,14 @@
 
 ## Release History
 
-### v1.6 "Sentinel" _(Latest)_
+### v2.0 "Novae" _(Latest)_
+- **[`set_fact` runtime variables](#set_fact)**: Assign variables in one task and reference them with `${var}` in any subsequent task
+- **Config seeding**: All `config:` block keys are automatically available as `${key}` throughout the playbook — no `set_fact` needed
+- **Variable chaining**: `set_fact` values can themselves reference earlier `${vars}`, enabling derived variables
+- **Mid-playbook overrides**: Call `set_fact` again at any point to update a variable for all following tasks
+- **Universal interpolation**: `${var}` works in every string field across all modules (`shell.cmd`, `file.path`, `debug.msg`, `archive.src/dest`, etc.)
+
+### v1.6 "Sentinel"
 - **[Role Package Manager](#roles--package-manager)**: Install reusable automation roles from any Git repository with `npkm roles install`
 - **[Project Scaffolding](#project-scaffolding-npkm-init)**: Scaffold a complete project skeleton with `npkm init`
 - **[Static Analysis](#static-analysis-npkm-lint)**: Validate playbooks before running with `npkm lint`
@@ -14,8 +21,6 @@
 - **[Interactive Step Mode](#interactive-step-mode---step)**: Execute tasks one-by-one with confirmation via `--step`
 - **[Execution Reports](#execution-reports---report)**: Generate JSON + HTML audit reports via `--report`
 - **[Run History](#run-history)**: Browse and diff past execution logs with `npkm run history`
-- **[`set_fact` module](#set_fact)**: Inject runtime variables mid-playbook
-- **[`test` module](#test)**: Inline TDD-style assertions on task output
 - **Keyword var interpolation**: `:vars {:key val}` in `include_tasks` now correctly resolves `{{ key }}` templates
 - **Multi-line command safety**: SSH commands with `&&` in block scalars now execute correctly on Debian/Ubuntu (`dash`)
 
