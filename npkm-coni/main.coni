@@ -870,7 +870,11 @@ v-val v-clean
       (if (empty? rem)
         curr
         (if (map? curr)
-          (recur (rest rem) (get curr (first rem)))
+          (let [k-str (first rem)
+                k-kw (keyword k-str)
+                val-str (get curr k-str)
+                val-kw (get curr k-kw)]
+            (recur (rest rem) (if val-str val-str val-kw)))
           nil)))))
 
 (defn get-os-family []
@@ -1064,7 +1068,7 @@ v-val v-clean
                                           (:with_items mod-args))))))]
                             (if loop-val
                               (if (string? loop-val)
-                                (let [resolved (resolve-var-path runtime-vars loop-val)]
+                                (let [resolved (resolve-var-path runtime-vars loop-val)] 
                                   (if (vector? resolved) resolved (if resolved [resolved] [])))
                                 (if (vector? loop-val) loop-val [])) nil))
                     is-step (:__step__ runtime-vars)
