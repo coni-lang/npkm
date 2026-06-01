@@ -7,6 +7,9 @@
   {:name "Print build date"
    :debug {:msg "Build date is {{ build_date }}"}}
 
+  {:name "Write build date file"
+   :shell {:cmd "printf '%s' '{{ build_date }}' > npkm-coni/build_date.txt"}}
+
   {:name "Build latest Coni compiler from source"
    :shell {:cmd "PATH=\"$PATH:/usr/local/go/bin:/opt/homebrew/bin\" go build -o /tmp/coni-compiler ."
            :cwd "/Users/nico/cool/coni-lang"}}
@@ -84,6 +87,9 @@
    :shell {:cmd "ls -lh npkm-coni npkm-coni-linux npkm-coni.exe npkm-coni-release-{{ build_date }}.zip"
            :cwd "dist"}
    :register "artifacts"}
+
+  {:name "Restore build date file"
+   :shell {:cmd "printf '%s' 'development' > npkm-coni/build_date.txt"}}
 
   {:name "Print Artifacts"
    :debug {:msg "Build & Package Complete!\nArtifacts:\n{{ artifacts }}"}}]}

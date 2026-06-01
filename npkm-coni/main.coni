@@ -1606,9 +1606,7 @@ v-val v-clean
                                       (not (= x names-val)))) args)]
     (if (some (fn [x] (or (= x "-v") (= x "-V") (= x "--version"))) flags)
       (do
-        (let [exe-path ((sys-os-args) 0)
-              cdate (io/file-mtime exe-path)
-              display-date (if (> (count cdate) 0) cdate "unknown date")]
+        (let [display-date (include-str "build_date.txt")]
           (println (str "npkm version: 2.0 \"Novae\" (compiled " display-date ")")))
         (sys-exit 0))
       nil)
