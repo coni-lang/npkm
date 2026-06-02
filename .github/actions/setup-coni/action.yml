@@ -1,0 +1,13 @@
+name: 'Setup Coni Compiler'
+description: 'Downloads and installs the Coni compiler'
+runs:
+  using: "composite"
+  steps:
+    - name: Download Coni Compiler
+      shell: bash
+      run: |
+        curl -fsSL -o coni https://coni-lang.org/downloads/coni-linux-x64
+        chmod +x coni
+        mkdir -p $GITHUB_WORKSPACE/bin
+        mv coni $GITHUB_WORKSPACE/bin/coni
+        echo "$GITHUB_WORKSPACE/bin" >> $GITHUB_PATH

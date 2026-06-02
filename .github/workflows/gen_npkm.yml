@@ -1,0 +1,45 @@
+name: Generate NPKM
+
+on:
+  push:
+    branches: [ "master", "main" ]
+  pull_request:
+    branches: [ "master", "main" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Setup Java
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Coni
+        uses: ./.github/actions/setup-coni
+
+      - name: Bootstrap NPKM
+        run: |
+          cd npkm-coni
+          coni build . -o npkm-coni
+          chmod +x npkm-coni
+
+      - name: Build and Package Release
+        run: |
+          ./npkm-coni/npkm-coni --verbose package_release.edn
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: npkm-release
+          path: dist/*.zip
