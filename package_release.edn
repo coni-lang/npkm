@@ -43,12 +43,10 @@
            :cwd "npkm-coni"}}
 
   {:name "Update local npkm-coni"
-   :copy {:src "dist/npkm-coni"
-          :dest "npkm-coni/npkm-coni"}}
+   :shell {:cmd "rm -f npkm-coni/npkm-coni && cp dist/npkm-coni npkm-coni/npkm-coni || true"}}
 
   {:name "Update local npkm-coni.exe"
-   :copy {:src "dist/npkm-coni.exe"
-          :dest "npkm-coni/npkm-coni.exe"}}
+   :shell {:cmd "rm -f npkm-coni/npkm-coni.exe && cp dist/npkm-coni.exe npkm-coni/npkm-coni.exe || true"}}
 
 
   {:name "Build IntelliJ Plugin"
