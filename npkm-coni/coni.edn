@@ -1,2 +1,2 @@
-{:compiler {:git "ssh://git@s5:2222/hellonico/coni-lang.git" :branch "main"}
- :dependencies {"libs" {:git "ssh://git@s5:2222/hellonico/coni-lang.git/libs" :branch "main"}}}
+{:compiler {:git "https://gitea.hellonico.info/hellonico/coni-lang.git" :branch "main"}
+ :dependencies {"libs" {:git "https://gitea.hellonico.info/hellonico/coni-lang.git/libs" :branch "main"}}}

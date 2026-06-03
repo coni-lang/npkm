@@ -31,6 +31,7 @@ jobs:
       - name: Bootstrap NPKM
         run: |
           cd npkm-coni
+          printf '%s' 'development' > build_date.txt
           coni build . -o npkm-coni
           chmod +x npkm-coni
 
