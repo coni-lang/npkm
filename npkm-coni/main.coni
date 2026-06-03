@@ -1281,9 +1281,10 @@ v-val v-clean
                     (let [new-vars (run-task t curr-vars)]
                       (recur (rest rem-tasks) new-vars))))))
             (catch e
-              (if is-bw
-                (println "  FAILED:" e)
-                (println "\033[31m  FAILED:" e "\033[0m"))
+              (let [clean-e (first (str/split (str e) " at line "))]
+                (if is-bw
+                  (println "  FAILED:" clean-e)
+                  (println "\033[31m  FAILED:" clean-e "\033[0m")))
               (sys-exit 1)))]
       (if (and handlers (> (count handlers) 0))
         (let [notified (:__notified_handlers__ final-vars)]
