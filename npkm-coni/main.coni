@@ -114,7 +114,7 @@
               (if (> (count (:stderr res)) 0) (println "  [DEBUG] STDERR:\n" (str/trim (:stderr res))))))
           (if (= (:code res) 0) 
             (:stdout res)
-            (throw (str "Exit code " (:code res) " : " (:stderr res)))))
+            (let [err (str/trim (:stderr res))] (throw (str "Exit code " (:code res) (if (> (count err) 0) (str " : " err) "")))))))
         (let [res (shell/sh local-cmd)]
           (if is-debug
             (do
@@ -127,7 +127,7 @@
               (if (and (not is-debug) (> (count (str/trim (:stdout res))) 0))
                 (println (str/trim (:stdout res))))
               (:stdout res)) 
-            (throw (str "Exit code " (:code res) " : " (:stderr res)))))))))
+            (let [err (str/trim (:stderr res))] (throw (str "Exit code " (:code res) (if (> (count err) 0) (str " : " err) "")))))))))
 
 (defrecord CommandTask [spec]
   PlaybookTask
@@ -266,9 +266,9 @@
   PlaybookTask
   (execute [this]
     (let [s (:spec this)
-          cmd (str "curl -sL " (:url s) " -o " (:dest s))
+          cmd (str "curl -fsSL " (:url s) " -o " (:dest s))
           res (shell/sh cmd)]
-      (if (= (:code res) 0) nil (throw (str "Exit code " (:code res) " : " (:stderr res)))))))
+      (if (= (:code res) 0) nil (let [err (str/trim (:stderr res))] (throw (str "Exit code " (:code res) (if (> (count err) 0) (str " : " err) ""))))))))
 
 (defrecord LineInFileTask [spec]
   PlaybookTask
