@@ -17,6 +17,9 @@ intellij {
 }
 
 tasks {
+    buildSearchableOptions {
+        enabled = false
+    }
     patchPluginXml {
         sinceBuild.set("232")   // 2023.2 — minimum supported
         untilBuild.set("")      // empty = no upper limit
