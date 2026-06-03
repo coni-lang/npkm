@@ -56,6 +56,12 @@
   {:name "Copy release files to dist"
    :shell {:cmd "cp -R {{ item }} dist/"}
    :with_items ["README.md"
+                "CLA.md"
+                "CODE_OF_CONDUCT.md"
+                "CONTRIBUTING.md"
+                "LICENSE"
+                "README-LICENSING.md"
+                "TRADEMARKS.md"
                 "npkm-features.md"
                 "demo.yml"
                 "demo-flow.yml"
@@ -73,7 +79,7 @@
            :cwd "dist"}}
 
   {:name "Package release zip"
-   :shell {:cmd "zip -r npkm-coni-release-{{ build_date }}.zip npkm-coni npkm-coni-linux npkm-coni.exe npkm-intellij-plugin-1.0.0.zip README.md npkm-features.md demo.yml demo-flow.yml demo-coni.yml demo-set-fact.yml test-playbook.edn test-playbook.yml test-loop.yml install_ollama.yml demo-multi-env/"
+   :shell {:cmd "zip -r npkm-coni-release-{{ build_date }}.zip npkm-coni npkm-coni-linux npkm-coni.exe npkm-intellij-plugin-1.0.0.zip README.md CLA.md CODE_OF_CONDUCT.md CONTRIBUTING.md LICENSE README-LICENSING.md TRADEMARKS.md npkm-features.md demo.yml demo-flow.yml demo-coni.yml demo-set-fact.yml test-playbook.edn test-playbook.yml test-loop.yml install_ollama.yml demo-multi-env/"
            :cwd "dist"}}
 
   {:name "Deploy to samba share"
