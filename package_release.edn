@@ -69,7 +69,7 @@
                  "npkm-intellij-plugin/build/distributions/npkm-intellij-plugin-1.0.0.zip"]}
 
   {:name "Dry-run all playbooks in dist"
-   :shell {:cmd "for f in $(find . -type f \\( -name '*.yml' -o -name '*.edn' \\)); do echo \"Dry running $f\"; ./npkm-coni --check $f; done"
+   :shell {:cmd "BIN=\"./npkm-coni\"; if [ \"$(uname)\" = \"Linux\" ]; then BIN=\"./npkm-coni-linux\"; fi; for f in $(find . -type f \\( -name '*.yml' -o -name '*.edn' \\)); do echo \"Dry running $f\"; $BIN --check $f; done"
            :cwd "dist"}}
 
   {:name "Package release zip"
