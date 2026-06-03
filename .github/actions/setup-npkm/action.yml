@@ -1,0 +1,32 @@
+name: 'Setup NPKM'
+description: 'Downloads and installs the NPKM playbook engine'
+inputs:
+  version:
+    description: 'Release version (e.g., build-8)'
+    required: true
+  asset-name:
+    description: 'Name of the zip asset (e.g., npkm-coni-release-2026-06-03-0948.zip)'
+    required: true
+runs:
+  using: "composite"
+  steps:
+    - name: Download NPKM
+      shell: bash
+      run: |
+        curl -LO https://github.com/coni-lang/npkm/releases/download/${{ inputs.version }}/${{ inputs.asset-name }}
+        
+        # Only extract the binaries to avoid overwriting README.md or other files in the workspace
+        unzip -q -o ${{ inputs.asset-name }} npkm-coni npkm-coni-linux npkm-coni.exe || true
+        
+        # Select the correct binary based on OS and put it in the PATH
+        mkdir -p $HOME/.local/bin
+        if [ "$(uname)" = "Linux" ]; then
+          mv npkm-coni-linux $HOME/.local/bin/npkm
+        elif [ "$(uname)" = "Darwin" ]; then
+          mv npkm-coni $HOME/.local/bin/npkm
+        else
+          mv npkm-coni.exe $HOME/.local/bin/npkm.exe
+        fi
+        
+        chmod +x $HOME/.local/bin/npkm*
+        echo "$HOME/.local/bin" >> $GITHUB_PATH
