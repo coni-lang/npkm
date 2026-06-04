@@ -370,7 +370,78 @@ Inline TDD-style assertions on task command output — fail fast if expectations
 
 ---
 
+
+## Advanced Execution & Templating (v2.1)
+
+### Task Delegation (`delegate_to`)
+Execute a specific task on a different host than the one currently being provisioned, while still having access to the target's variables.
+
+```yaml
+- name: Remove from load balancer pool
+  command: "haproxyctl disable server {{ inventory_hostname }}"
+  delegate_to: load_balancer_01
+```
+
+### Asynchronous Tasks (`async` & `poll`)
+Run long-running tasks in the background without blocking the rest of your playbook execution.
+
+```yaml
+- name: Run database migration
+  shell:
+    cmd: "rake db:migrate"
+  async: 300     # Maximum time (in seconds) the task is allowed to run
+  poll: 0        # 0 means "fire-and-forget" (don't wait for completion)
+```
+
+### Shell Idempotence (`creates` / `removes`)
+Make shell commands perfectly idempotent (safe to run multiple times) by checking file existence.
+
+```yaml
+- name: Download application binary
+  shell:
+    cmd: "wget http://example.com/app -O /usr/local/bin/app"
+    creates: "/usr/local/bin/app"  # Skip if file already exists
+
+- name: Clean up temporary files
+  shell:
+    cmd: "rm -rf /tmp/build-cache"
+    removes: "/tmp/build-cache"    # Skip if file is already removed
+```
+
+### Playbook Tags (`--tags` / `--skip-tags`)
+Tag specific tasks and selectively run them.
+
+```yaml
+- name: Update database schema
+  command: "migrate"
+  tags: ["db", "upgrade"]
+
+- name: Drop database
+  command: "dropdb"
+  tags: ["db", "destructive"]
+```
+```bash
+npkm --tags db --skip-tags destructive playbook.yml
+```
+
+### Advanced Template Filters
+Format, join, and manipulate variables directly inside templates!
+
+```yaml
+- name: Set facts
+  set_fact:
+    my_list: ["a", "b", "c"]
+    my_var: ""
+
+- name: Use inline filters
+  debug:
+    msg: "Joined list: {{ my_list | join(',') }} or Default var: {{ my_var | default('fallback') }}"
+```
+
+---
+
 ## Remote SSH Orchestration (Inventories)
+
 
 ```yaml
 # inventory.yml

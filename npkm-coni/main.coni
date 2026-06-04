@@ -10,6 +10,55 @@
 (require "libs/vault/src/vault.coni" :as vault)
 (require "doc_data.coni" :as doc)
 
+(defn apply-filters-to-string [s vars]
+  (let [parts (str/split s "{{")]
+    (if (= (count parts) 1)
+      s
+      (loop [rem (rest parts)
+             acc (first parts)]
+        (if (empty? rem)
+          acc
+          (let [part (first rem)
+                end-idx (str/index-of part "}}")]
+            (if (= end-idx -1)
+              (recur (rest rem) (str acc "{{" part))
+              (let [expr (str/trim (str/slice part 0 end-idx))
+                    rest-str (str/slice part (+ end-idx 2) (count part))
+                    expr-parts (str/split expr "|")
+                    var-name (str/trim (first expr-parts))
+                    filters (rest expr-parts)
+                    base-val-raw (get vars (keyword var-name))
+                    base-val (if base-val-raw base-val-raw (get vars var-name))
+                    final-val (loop [f-rem filters
+                                     curr-val base-val]
+                                (if (empty? f-rem)
+                                  curr-val
+                                  (let [f (str/trim (first f-rem))]
+                                    (if (str/starts-with? f "default(")
+                                      (let [def-val (str/slice f 9 (- (count f) 2))]
+                                        (recur (rest f-rem) (if (or (nil? curr-val) (= curr-val "")) def-val curr-val)))
+                                      (if (str/starts-with? f "join(")
+                                        (let [join-str (str/slice f 6 (- (count f) 2))]
+                                          (recur (rest f-rem) (if (vector? curr-val) (str/join join-str curr-val) curr-val)))
+                                        (recur (rest f-rem) curr-val))))))]
+                (recur (rest rem) (str acc final-val rest-str))))))))))
+
+(defn apply-filters-recursive [node vars]
+  (if (map? node)
+    (loop [ks (keys node) acc {}]
+      (if (empty? ks) acc
+          (recur (rest ks) (assoc acc (first ks) (apply-filters-recursive (get node (first ks)) vars)))))
+    (if (vector? node)
+      (loop [rem node acc []]
+        (if (empty? rem) acc
+            (recur (rest rem) (conj acc (apply-filters-recursive (first rem) vars)))))
+      (if (string? node)
+        (apply-filters-to-string node vars)
+        node))))
+
+(defn custom-interp [node vars]
+  (apply-filters-recursive (tpl/walk-interp node vars) vars))
+
 ;; --- Global Logger ---
 (def original-println println)
 (def original-print print)
@@ -17,6 +66,8 @@
 (def global-log-acc (atom ""))
 
 (def target-labels (atom []))
+(def target-tags (atom []))
+(def skip-tags (atom []))
 (def target-names (atom []))
 (def global-step-mode (atom false))
 
@@ -122,8 +173,8 @@
               (if (> (count (:stderr res)) 0) (println "  [DEBUG] STDERR:\n" (str/trim (:stderr res))))))
           (if (= (:code res) 0) 
             (:stdout res)
-            (let [err (str/trim (:stderr res))] (throw (str "Exit code " (:code res) (if (> (count err) 0) (str " : " err) "")))))))
-        (let [res (shell/sh local-cmd)]
+            (let [err (str/trim (:stderr res))] (throw (str "Exit code " (:code res) (if (> (count err) 0) (str " : " err) ""))))))
+            (let [res (shell/sh local-cmd)]
           (if is-debug
             (do
               (println "  [DEBUG] Command:" local-cmd)
@@ -135,7 +186,7 @@
               (if (and (not is-debug) (> (count (str/trim (:stdout res))) 0))
                 (println (str/trim (:stdout res))))
               (:stdout res)) 
-            (let [err (str/trim (:stderr res))] (throw (str "Exit code " (:code res) (if (> (count err) 0) (str " : " err) "")))))))))))
+            (let [err (str/trim (:stderr res))] (throw (str "Exit code " (:code res) (if (> (count err) 0) (str " : " err) ""))))))))))))
 
 (defrecord CommandTask [spec]
   PlaybookTask
@@ -835,7 +886,7 @@ v-val v-clean
             v (if (get raw k) (get raw k) (get raw (keyword k)))]
         (if v
           (let [v-clean (if (map? v) v (if (or (= k :shell) (= k :command)) {:cmd v} {:_val v}))]
-            [k v-clean])
+            [k (merge raw v-clean)])
           (recur (rest rem)))))))
 
 
@@ -944,7 +995,9 @@ v-val v-clean
     (if match
       (let [k (first match)
             v (second match)
-            v-with-conn (if (map? v) (assoc v :__connection__ (:__connection__ runtime-vars)) v)
+            delegate-host (if (:delegate_to interp-raw-task) (:delegate_to interp-raw-task) (get interp-raw-task "delegate_to"))
+            conn-override (if delegate-host (if (or (= delegate-host "localhost") (= delegate-host "127.0.0.1")) nil {:host delegate-host :port 22 :user nil :key nil :password nil}) (:__connection__ runtime-vars))
+            v-with-conn (if (map? v) (assoc v :__connection__ conn-override) v)
             v-with-debug (if (map? v-with-conn) (assoc v-with-conn :__debug__ (:__debug__ runtime-vars)) v-with-conn)
             raw-become (if (:become interp-raw-task) (:become interp-raw-task) (get interp-raw-task "become"))
             v-with-become (if (and (map? v-with-debug) raw-become) (assoc v-with-debug :__become__ true) v-with-debug)
@@ -958,7 +1011,16 @@ v-val v-clean
                                   (let [supports-check (or (= k :template) (= k :lineinfile) (= k :replace) (= k :copy) (= k :file) (= k :remove))
                                         o (if (and (:__dry_run__ runtime-vars) (not supports-check))
                                             "  skipping module execution (dry-run)"
-                                            (execute (constructor v-with-vars)))]
+                                            (let [is-async (if (:async interp-raw-task) (:async interp-raw-task) false)
+                                                  poll-val (if (contains? interp-raw-task :poll) (:poll interp-raw-task) 10)]
+                                              (if (and is-async (= poll-val 0))
+                                                (do
+                                                  (spawn (fn []
+                                                           (try
+                                                             (execute (constructor v-with-vars))
+                                                             (catch e nil))))
+                                                  "  started asynchronously")
+                                                (execute (constructor v-with-vars)))))]
                                     {:ok true :val o})
                                   (catch e
                                     {:ok false :err e}))]
@@ -1029,7 +1091,7 @@ v-val v-clean
         (let [new-vars (loop [ks (keys sf-raw) acc runtime-vars]
                          (if (empty? ks) acc
                            (let [k (first ks)
-                                 v (tpl/walk-interp (get sf-raw k) runtime-vars)]
+                                 v (custom-interp (get sf-raw k) runtime-vars)]
                              (recur (rest ks) (assoc acc (keyword k) v)))))]
           (if (is-bw) (println "  ok (set_fact)\n") (println "\033[32m  ok (set_fact)\033[0m\n"))
           (swap! stats-ok inc)
@@ -1039,18 +1101,23 @@ v-val v-clean
       (let [include-src (if (:include_tasks raw-task) (:include_tasks raw-task)
                           (get raw-task "include_tasks"))]
         (if include-src
-          (let [interp-src (tpl/walk-interp include-src runtime-vars)
+          (let [interp-src (custom-interp include-src runtime-vars)
                 when-clause (if (:when raw-task) (:when raw-task) (get raw-task "when"))
                 should-run (eval-when when-clause runtime-vars)
-                skip-labels? (if (empty? @target-labels) false
-                               (if (nil? (:labels raw-task)) false
-                                 (let [task-labels (:labels raw-task)
-                                       task-labels-vec (if (vector? task-labels) task-labels [task-labels])]
-                                   (not (some (fn [l] (some (fn [tl] (= l tl)) @target-labels)) task-labels-vec)))))
+                skip-labels? (if (empty? @target-tags) false
+                               (let [raw-tags (if (:tags raw-task) (:tags raw-task) (:labels raw-task))]
+                                 (if (nil? raw-tags) false
+                                   (let [task-labels-vec (if (vector? raw-tags) raw-tags [raw-tags])]
+                                     (not (some (fn [l] (some (fn [tl] (= l tl)) @target-tags)) task-labels-vec))))))
+                skip-by-skip-tags? (if (empty? @skip-tags) false
+                                     (let [raw-tags (if (:tags raw-task) (:tags raw-task) (:labels raw-task))]
+                                       (if (nil? raw-tags) false
+                                         (let [task-labels-vec (if (vector? raw-tags) raw-tags [raw-tags])]
+                                           (some (fn [l] (some (fn [tl] (= l tl)) @skip-tags)) task-labels-vec)))))
                 skip-names? (if (empty? @target-names) false
                               (if (nil? (:name raw-task)) false
                                 (not (some (fn [tn] (= (:name raw-task) tn)) @target-names))))
-                skip-task? (or skip-labels? skip-names?)
+                skip-task? (or skip-labels? skip-by-skip-tags? skip-names?)
                 should-run (and should-run (not skip-task?))]
             (if (is-bw)
               (println "TASK [" (:name raw-task) "]")
@@ -1102,20 +1169,24 @@ v-val v-clean
                         vars-after-block)))
                   runtime-vars))
               ;; --- normal task processing ---
-              (let [interp-raw-task (tpl/walk-interp raw-task runtime-vars)
+              (let [interp-raw-task (custom-interp raw-task runtime-vars)
                     match (get-task-match interp-raw-task)
                     mod-args (if match (second match) {})
                     when-clause (if (:when interp-raw-task) (:when interp-raw-task)
                                   (if (get interp-raw-task "when") (get interp-raw-task "when")
                                     (if (:when mod-args) (:when mod-args) (get mod-args "when"))))
                     should-run (eval-when when-clause runtime-vars)
-                    skip-labels? (if (empty? @target-labels) false
-                                   (let [task-labels (if (:labels interp-raw-task) (:labels interp-raw-task) [])
-                                         task-labels-vec (if (vector? task-labels) task-labels [task-labels])]
-                                     (not (some (fn [l] (some (fn [tl] (= l tl)) @target-labels)) task-labels-vec))))
+                    skip-labels? (if (empty? @target-tags) false
+                                   (let [raw-tags (if (:tags interp-raw-task) (:tags interp-raw-task) (:labels interp-raw-task))
+                                         task-labels-vec (if (vector? raw-tags) raw-tags (if raw-tags [raw-tags] []))]
+                                     (not (some (fn [l] (some (fn [tl] (= l tl)) @target-tags)) task-labels-vec))))
+                    skip-by-skip-tags? (if (empty? @skip-tags) false
+                                         (let [raw-tags (if (:tags interp-raw-task) (:tags interp-raw-task) (:labels interp-raw-task))
+                                               task-labels-vec (if (vector? raw-tags) raw-tags (if raw-tags [raw-tags] []))]
+                                           (some (fn [l] (some (fn [tl] (= l tl)) @skip-tags)) task-labels-vec)))
                     skip-names? (if (empty? @target-names) false
                                   (not (some (fn [tn] (= (:name interp-raw-task) tn)) @target-names)))
-                    skip-task? (or skip-labels? skip-names?)
+                    skip-task? (or skip-labels? skip-by-skip-tags? skip-names?)
                     should-run (and should-run (not skip-task?))
                     items (let [loop-val (if (:loop interp-raw-task) (:loop interp-raw-task)
                                           (if (:items interp-raw-task) (:items interp-raw-task)
@@ -1653,13 +1724,16 @@ v-val v-clean
          _ (if is-step (reset! global-step-mode true))
         inv-file (loop [i 0] (if (>= i (count args)) nil (if (= (nth args i) "-i") (nth args (+ i 1)) (recur (+ i 1)))))
         inventory (if inv-file (parse-inventory inv-file) nil)
-        lbl-idx (loop [i 0] (if (>= i (count args)) -1 (if (= (nth args i) "--labels") i (recur (+ i 1)))))
+        lbl-idx (loop [i 0] (if (>= i (count args)) -1 (if (or (= (nth args i) "--labels") (= (nth args i) "--tags") (= (nth args i) "-t")) i (recur (+ i 1)))))
         labels-val (if (>= lbl-idx 0) (nth args (+ lbl-idx 1)) nil)
+        skip-tags-idx (loop [i 0] (if (>= i (count args)) -1 (if (= (nth args i) "--skip-tags") i (recur (+ i 1)))))
+        skip-tags-val (if (>= skip-tags-idx 0) (nth args (+ skip-tags-idx 1)) nil)
         names-idx (loop [i 0] (if (>= i (count args)) -1 (if (= (nth args i) "--names") i (recur (+ i 1)))))
         names-val (if (>= names-idx 0) (nth args (+ names-idx 1)) nil)
         pos-args (filter (fn [x] (and (not (str/starts-with? x "-")) 
                                       (not (= x inv-file)) 
                                       (not (= x labels-val)) 
+                                      (not (= x skip-tags-val)) 
                                       (not (= x names-val)))) args)]
     (if (some (fn [x] (or (= x "-v") (= x "-V") (= x "--version"))) flags)
       (do
@@ -1678,7 +1752,9 @@ v-val v-clean
         (println "  --diff         show differences in files being changed")
         (println "  --report       generate JSON + HTML execution report in ~/.npkm/reports/")
         (println "  --step         interactive task-by-task confirmation before execution")
-        (println "  --labels       comma-separated labels to execute")
+        (println "  -t, --tags     comma-separated tags to execute")
+        (println "  --skip-tags    comma-separated tags to skip")
+        (println "  --labels       comma-separated labels to execute (deprecated, use --tags)")
         (println "  --names        comma-separated task names to execute")
         (println "  -bw            disable color output")
         (println "\nCommands:")
@@ -1789,7 +1865,9 @@ v-val v-clean
           is-git? (if playbook-file (or (str/ends-with? playbook-file ".git") (str/starts-with? playbook-file "git://") (str/starts-with? playbook-file "git@") (str/starts-with? playbook-file "ssh://git@")) false)
           is-doc? (some (fn [x] (= x "--doc")) flags)
           labels-list (if labels-val (str/split labels-val ",") [])
-          _ (if (> (count labels-list) 0) (reset! target-labels labels-list))
+          _ (if (> (count labels-list) 0) (do (reset! target-labels labels-list) (reset! target-tags labels-list)))
+          skip-tags-list (if skip-tags-val (str/split skip-tags-val ",") [])
+          _ (if (> (count skip-tags-list) 0) (reset! skip-tags skip-tags-list))
           names-list (if names-val (str/split names-val ",") [])
           _ (if (> (count names-list) 0) (reset! target-names names-list))]
       (if is-doc?
