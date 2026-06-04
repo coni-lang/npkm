@@ -533,6 +533,7 @@ Options:
 
 Commands:
   npkm init [dir]                scaffold a new project
+  npkm doctor                    health check and system validation
   npkm lint <playbook>           static analysis
   npkm watch <playbook>          re-run on file change
   npkm run history               list past run logs

@@ -1711,6 +1711,24 @@ v-val v-clean
               (recur new-mtimes (+ run-count 1)))
             (recur new-mtimes run-count)))))))
 
+(defn npkm-doctor []
+  (println "\n\033[36m    _   ______  __ __ __  __[0m")
+  (println "\033[36m   / | / / __ \\/ //_//  |/  /[0m")
+  (println "\033[36m  /  |/ / /_/ / ,<   / /|_/ /[0m")
+  (println "\033[36m / /|  / ____/ /| | / /  / /[0m")
+  (println "\033[36m/_/ |_/_/   /_/ |_|/_/  /_/[0m")
+  (println " \033[34m⬡ NPKM Health Check ⬡\033[0m\n")
+  (let [check (fn [name cmd]
+                (let [res (shell/sh cmd)]
+                  (if (= 0 (:code res))
+                    (println (str "  \033[32m✓\033[0m " name ": OK (" (str/trim (first (str/split (:stdout res) "\n"))) ")"))
+                    (println (str "  \033[31m✗\033[0m " name ": Missing or failed")))))]
+    (check "SSH" "ssh -V 2>&1")
+    (check "Curl" "curl --version | head -n 1")
+    (check "Zip" "zip -v 2>&1 | head -n 2")
+    (check "Git" "git --version")
+    (println "\n\033[32mAll systems nominal. Ready to orchestrate.\033[0m\n")))
+
 (defn run []
   (let [args (cli/args)
         flags (filter (fn [x] (str/starts-with? x "-")) args)
@@ -1861,6 +1879,8 @@ v-val v-clean
             (if (not watch-target) (do (println "Usage: npkm watch <playbook>") (sys-exit 1)))
             (npkm-watch watch-target inv-file is-bw is-debug is-dry-run is-diff))
           (sys-exit 0)))
+      (if (= (first pos-args-clean) "doctor")
+        (do (npkm-doctor) (sys-exit 0)))
       (let [playbook-file (first pos-args-clean)
           is-git? (if playbook-file (or (str/ends-with? playbook-file ".git") (str/starts-with? playbook-file "git://") (str/starts-with? playbook-file "git@") (str/starts-with? playbook-file "ssh://git@")) false)
           is-doc? (some (fn [x] (= x "--doc")) flags)
