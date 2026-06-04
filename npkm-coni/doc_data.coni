@@ -27,10 +27,17 @@
 
 ### v2.0 \"Novae\" _(Latest)_
 - **[\\`set_fact\\` runtime variables](#set_fact)**: Assign variables in one task and reference them with \\`\\${var}\\` in any subsequent task
+- **[\\`register\\` output capture]**: Save any module's execution output (including stdout/stderr) to a variable for subsequent tasks.
+- **Host Filtering**: Use \\`--limit <host_or_group>\\` to surgically target specific infrastructure subsets.
 - **Config seeding**: All \\`config:\\` block keys are automatically available as \\`\\${key}\\` throughout the playbook — no \\`set_fact\\` needed
 - **Variable chaining**: \\`set_fact\\` values can themselves reference earlier \\`\\${vars}\\`, enabling derived variables
 - **Mid-playbook overrides**: Call \\`set_fact\\` again at any point to update a variable for all following tasks
 - **Universal interpolation**: \\`\\${var}\\` works in every string field across all modules (\\`shell.cmd\\`, \\`file.path\\`, \\`debug.msg\\`, \\`archive.src/dest\\`, etc.)
+- **Enhanced Modules**: 
+  - \\`stat\\`: Fetch rich file/directory telemetry into nested maps (\\`{{ file_info.stat.size }}\\`).
+  - \\`copy\\`: Now supports \\`content\\` mode to write templated strings directly to disk.
+  - **Native OS Package Aliases**: Use direct \\`apt:\\`, \\`yum:\\`, \\`brew:\\`, \\`winget:\\`, and \\`choco:\\` module syntax.
+  - **Dry-run (\\`--check\\`)**: \\`copy\\`, \\`file\\`, and \\`remove\\` now cleanly simulate their execution without mutating disk state.
 
 ### v1.6 \"Sentinel\"
 - **[Role Package Manager](#roles--package-manager)**: Install reusable automation roles from any Git repository with \\`npkm roles install\\`
@@ -80,6 +87,49 @@ npkm lint playbook.yml
 
 # Watch for changes and re-run automatically
 npkm watch -i inventory.yml playbook.yml
+\\`\\`\\`
+
+---
+
+## Examples (v2.0 Features)
+
+Here is a quick playbook showcasing the latest module improvements, output capturing (\\`register\\`), nested variable interpolation, and dry-run safety:
+
+\\`\\`\\`yaml
+- name: Setup Web Server
+  hosts: all
+  tasks:
+    - name: Fetch details about the existing nginx directory
+      stat:
+        path: /etc/nginx
+      register: nginx_stat
+
+    - name: Print the directory size if it exists
+      debug:
+        msg: \"Nginx config size is {{ nginx_stat.stat.size }} bytes\"
+      # Conditionally runs only if the nested map evaluation is true
+      when: \"{{ nginx_stat.stat.exists }}\"
+
+    - name: Ensure Nginx is installed (using native OS alias)
+      apt:
+        name: nginx
+        state: present
+
+    - name: Write a templated index file directly to disk
+      copy:
+        dest: /var/www/html/index.html
+        content: |
+          <h1>Welcome to {{ hostname }}</h1>
+          <p>Managed natively by NPKM</p>
+\\`\\`\\`
+
+**Running with \\`--check\\` (Dry Run):**
+If you run the above playbook with \\`npkm --check playbook.yml\\`, the \\`apt\\` and \\`copy\\` modules will gracefully simulate execution and return \\`changed: true\\` without altering your server state!
+
+**Running with \\`--limit\\`:**
+You can seamlessly restrict \\`hosts: all\\` to a specific target subset:
+\\`\\`\\`bash
+npkm --limit web_servers playbook.yml
 \\`\\`\\`
 
 ---
@@ -322,10 +372,12 @@ Inline TDD-style assertions on task command output — fail fast if expectations
 | \\`template\\` | Render templated config files |
 | \\`get_url\\` | Download remote files |
 | \\`archive\\`, \\`unzip\\` | Compress / extract |
-| \\`package\\` | brew / apt / yum / winget / choco |
+| \\`package\\` | Generic package manager abstraction |
+| \\`apt\\`, \\`yum\\`, \\`brew\\`, \\`winget\\`, \\`choco\\` | OS-specific package manager native aliases |
 | \\`service\\`, \\`systemd\\` | Manage system daemons |
 | \\`user\\` | Create / remove system users |
 | \\`cron\\` | Manage crontab entries |
+| \\`stat\\` | Retrieve file or file system status |
 | \\`git\\` | Clone or pull repositories |
 | \\`path\\` | Modify \\`$PATH\\` |
 | \\`debug\\`, \\`fail\\` | Output and control flow |
@@ -337,7 +389,78 @@ Inline TDD-style assertions on task command output — fail fast if expectations
 
 ---
 
+
+## Advanced Execution & Templating (v2.1)
+
+### Task Delegation (\\`delegate_to\\`)
+Execute a specific task on a different host than the one currently being provisioned, while still having access to the target's variables.
+
+\\`\\`\\`yaml
+- name: Remove from load balancer pool
+  command: \"haproxyctl disable server {{ inventory_hostname }}\"
+  delegate_to: load_balancer_01
+\\`\\`\\`
+
+### Asynchronous Tasks (\\`async\\` & \\`poll\\`)
+Run long-running tasks in the background without blocking the rest of your playbook execution.
+
+\\`\\`\\`yaml
+- name: Run database migration
+  shell:
+    cmd: \"rake db:migrate\"
+  async: 300     # Maximum time (in seconds) the task is allowed to run
+  poll: 0        # 0 means \"fire-and-forget\" (don't wait for completion)
+\\`\\`\\`
+
+### Shell Idempotence (\\`creates\\` / \\`removes\\`)
+Make shell commands perfectly idempotent (safe to run multiple times) by checking file existence.
+
+\\`\\`\\`yaml
+- name: Download application binary
+  shell:
+    cmd: \"wget http://example.com/app -O /usr/local/bin/app\"
+    creates: \"/usr/local/bin/app\"  # Skip if file already exists
+
+- name: Clean up temporary files
+  shell:
+    cmd: \"rm -rf /tmp/build-cache\"
+    removes: \"/tmp/build-cache\"    # Skip if file is already removed
+\\`\\`\\`
+
+### Playbook Tags (\\`--tags\\` / \\`--skip-tags\\`)
+Tag specific tasks and selectively run them.
+
+\\`\\`\\`yaml
+- name: Update database schema
+  command: \"migrate\"
+  tags: [\"db\", \"upgrade\"]
+
+- name: Drop database
+  command: \"dropdb\"
+  tags: [\"db\", \"destructive\"]
+\\`\\`\\`
+\\`\\`\\`bash
+npkm --tags db --skip-tags destructive playbook.yml
+\\`\\`\\`
+
+### Advanced Template Filters
+Format, join, and manipulate variables directly inside templates!
+
+\\`\\`\\`yaml
+- name: Set facts
+  set_fact:
+    my_list: [\"a\", \"b\", \"c\"]
+    my_var: \"\"
+
+- name: Use inline filters
+  debug:
+    msg: \"Joined list: {{ my_list | join(',') }} or Default var: {{ my_var | default('fallback') }}\"
+\\`\\`\\`
+
+---
+
 ## Remote SSH Orchestration (Inventories)
+
 
 \\`\\`\\`yaml
 # inventory.yml
@@ -421,6 +544,7 @@ Options:
   --diff                show file diffs
   --report              generate HTML + JSON execution report
   --step                interactive task-by-task confirmation
+  --limit <hosts>       limit execution to specific hosts or groups
   --labels <csv>        run only tasks matching labels
   --names  <csv>        run only tasks matching names
   -i <file>             inventory file
@@ -428,6 +552,7 @@ Options:
 
 Commands:
   npkm init [dir]                scaffold a new project
+  npkm doctor                    health check and system validation
   npkm lint <playbook>           static analysis
   npkm watch <playbook>          re-run on file change
   npkm run history               list past run logs
