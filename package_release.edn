@@ -5,10 +5,10 @@
    :register "build_date"}
 
   {:name "Print build date"
-   :debug {:msg "Build date is {{ build_date }}"}}
+   :debug {:msg "Build date is {{ build_date.stdout }}"}}
 
   {:name "Write build date file"
-   :shell {:cmd "printf '%s' '{{ build_date }}' > npkm-coni/build_date.txt"}}
+   :shell {:cmd "printf '%s' '{{ build_date.stdout }}' > npkm-coni/build_date.txt"}}
 
   {:name "Verify Coni compiler"
    :shell {:cmd "coni version"}}
@@ -79,15 +79,15 @@
            :cwd "dist"}}
 
   {:name "Package release zip"
-   :shell {:cmd "zip -r npkm-coni-release-{{ build_date }}.zip npkm-coni npkm-coni-linux npkm-coni.exe npkm-intellij-plugin-1.0.0.zip README.md CLA.md CODE_OF_CONDUCT.md CONTRIBUTING.md LICENSE README-LICENSING.md TRADEMARKS.md npkm-features.md demo.yml demo-flow.yml demo-coni.yml demo-set-fact.yml test-playbook.edn test-playbook.yml test-loop.yml install_ollama.yml demo-multi-env/"
+   :shell {:cmd "zip -r npkm-coni-release-{{ build_date.stdout }}.zip npkm-coni npkm-coni-linux npkm-coni.exe npkm-intellij-plugin-1.0.0.zip README.md CLA.md CODE_OF_CONDUCT.md CONTRIBUTING.md LICENSE README-LICENSING.md TRADEMARKS.md npkm-features.md demo.yml demo-flow.yml demo-coni.yml demo-set-fact.yml test-playbook.edn test-playbook.yml test-loop.yml install_ollama.yml demo-multi-env/"
            :cwd "dist"}}
 
   {:name "Deploy to samba share"
-   :shell {:cmd "if [ -d \"/Volumes/share/npkm\" ]; then pv npkm-coni-release-{{ build_date }}.zip > \"/Volumes/share/npkm/npkm-coni-release-{{ build_date }}.zip\"; else echo \"Samba share not mounted at /Volumes/share/npkm — skipping deploy\"; fi"
+   :shell {:cmd "if [ -d \"/Volumes/share/npkm\" ]; then pv npkm-coni-release-{{ build_date.stdout }}.zip > \"/Volumes/share/npkm/npkm-coni-release-{{ build_date.stdout }}.zip\"; else echo \"Samba share not mounted at /Volumes/share/npkm — skipping deploy\"; fi"
            :cwd "dist"}}
 
   {:name "List Artifacts"
-   :shell {:cmd "ls -lh npkm-coni npkm-coni-linux npkm-coni.exe npkm-coni-release-{{ build_date }}.zip"
+   :shell {:cmd "ls -lh npkm-coni npkm-coni-linux npkm-coni.exe npkm-coni-release-{{ build_date.stdout }}.zip"
            :cwd "dist"}
    :register "artifacts"}
 
@@ -95,4 +95,4 @@
    :shell {:cmd "printf '%s' 'development' > npkm-coni/build_date.txt"}}
 
   {:name "Print Artifacts"
-   :debug {:msg "Build & Package Complete!\nArtifacts:\n{{ artifacts }}"}}]}
+   :debug {:msg "Build & Package Complete!\nArtifacts:\n{{ artifacts.stdout }}"}}]}
