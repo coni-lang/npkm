@@ -101,8 +101,16 @@
                        (str sudo-pfx cmd-normalized)
                        (str sudo-pfx "sh -c '" escaped-inner "'"))
           ;; Local: shell/sh already runs through the OS shell, no wrapping needed.
-          local-cmd (str sudo-pfx (if cwd (str "cd " cwd " && " cmd) cmd))]
-      (if conn
+          local-cmd (str sudo-pfx (if cwd (str "cd " cwd " && " cmd) cmd))
+          creates (:creates (:spec this))
+          removes (:removes (:spec this))
+          skip-creates (if creates (if conn (= (:code (sys-ssh-exec conn (str "test -e '" creates "'"))) 0) (io/exists? creates)) false)
+          skip-removes (if removes (if conn (not= (:code (sys-ssh-exec conn (str "test -e '" removes "'"))) 0) (not (io/exists? removes))) false)]
+      (if skip-creates
+        "  skipping (creates condition met)"
+        (if skip-removes
+          "  skipping (removes condition met)"
+          (if conn
         (let [real-conn (assoc conn :debug true)
               res (sys-ssh-exec real-conn remote-cmd)]
           (if is-debug
@@ -127,7 +135,7 @@
               (if (and (not is-debug) (> (count (str/trim (:stdout res))) 0))
                 (println (str/trim (:stdout res))))
               (:stdout res)) 
-            (let [err (str/trim (:stderr res))] (throw (str "Exit code " (:code res) (if (> (count err) 0) (str " : " err) "")))))))))
+            (let [err (str/trim (:stderr res))] (throw (str "Exit code " (:code res) (if (> (count err) 0) (str " : " err) "")))))))))))
 
 (defrecord CommandTask [spec]
   PlaybookTask
@@ -984,10 +992,11 @@ v-val v-clean
             nil)
           (let [changed-when-expr (if (contains? interp-raw-task :changed_when) (:changed_when interp-raw-task)
                                     (if (and (map? v) (contains? v :changed_when)) (:changed_when v) nil))
-                is-changed (if (nil? changed-when-expr) true
-                             (if (or (= changed-when-expr true) (= changed-when-expr false)) changed-when-expr
-                               (if (string? changed-when-expr) (eval-when changed-when-expr (assoc runtime-vars :result (str/trim (if out-str (str out-str) ""))))
-                                 true)))]
+                is-changed (if (str/includes? (str out-str) "skipping") false
+                             (if (nil? changed-when-expr) true
+                               (if (or (= changed-when-expr true) (= changed-when-expr false)) changed-when-expr
+                                 (if (string? changed-when-expr) (eval-when changed-when-expr (assoc runtime-vars :result (str/trim (if out-str (str out-str) ""))))
+                                   true))))]
             (if (is-bw)
               (if (:__dry_run__ runtime-vars)
                 (println "  ok (dry-run)\n")
