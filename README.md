@@ -72,6 +72,49 @@ npkm watch -i inventory.yml playbook.yml
 
 ---
 
+## Examples (v2.0 Features)
+
+Here is a quick playbook showcasing the latest module improvements, output capturing (`register`), nested variable interpolation, and dry-run safety:
+
+```yaml
+- name: Setup Web Server
+  hosts: all
+  tasks:
+    - name: Fetch details about the existing nginx directory
+      stat:
+        path: /etc/nginx
+      register: nginx_stat
+
+    - name: Print the directory size if it exists
+      debug:
+        msg: "Nginx config size is {{ nginx_stat.stat.size }} bytes"
+      # Conditionally runs only if the nested map evaluation is true
+      when: "{{ nginx_stat.stat.exists }}"
+
+    - name: Ensure Nginx is installed (using native OS alias)
+      apt:
+        name: nginx
+        state: present
+
+    - name: Write a templated index file directly to disk
+      copy:
+        dest: /var/www/html/index.html
+        content: |
+          <h1>Welcome to {{ hostname }}</h1>
+          <p>Managed natively by NPKM</p>
+```
+
+**Running with `--check` (Dry Run):**
+If you run the above playbook with `npkm --check playbook.yml`, the `apt` and `copy` modules will gracefully simulate execution and return `changed: true` without altering your server state!
+
+**Running with `--limit`:**
+You can seamlessly restrict `hosts: all` to a specific target subset:
+```bash
+npkm --limit web_servers playbook.yml
+```
+
+---
+
 ## Roles — Package Manager
 
 Roles are reusable, Git-versioned task collections. Install them from any Git repository and reference them in your playbooks via `include_tasks`.
