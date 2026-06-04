@@ -167,7 +167,7 @@
             (throw (str "Unknown state " state))))))
           (if (:mode s)
             (let [res (shell/sh (str "chmod " (:mode s) " " path))] (if (= (:code res) 0) nil (throw (:stderr res))))
-            nil))))))
+            nil)))))))
 
 (defrecord DebugTask [spec]
   PlaybookTask
@@ -218,7 +218,7 @@
                           target (str dest rel)]
                       (if (io/directory? e) (io/make-dir target) (io/copy e target))
                       (recur (rest rem))))))
-              (do (io/copy src dest) nil))))))))
+              (do (io/copy src dest) nil)))))))))
 
 (defrecord RemoveTask [spec]
   PlaybookTask
@@ -237,8 +237,8 @@
                 entries (io/read-dir dir)]
             (loop [rem entries]
               (if (empty? rem) nil
-                (do (io/delete-file (str dir "/" (first rem))) (recur (rest rem))))))
-          (io/delete-file path))))))
+                  (do (io/delete-file (str dir "/" (first rem))) (recur (rest rem))))))
+          (io/delete-file path)))))))
 
 (defrecord FailTask [spec]
   PlaybookTask

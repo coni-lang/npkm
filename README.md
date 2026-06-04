@@ -8,10 +8,17 @@
 
 ### v2.0 "Novae" _(Latest)_
 - **[`set_fact` runtime variables](#set_fact)**: Assign variables in one task and reference them with `${var}` in any subsequent task
+- **[`register` output capture]**: Save any module's execution output (including stdout/stderr) to a variable for subsequent tasks.
+- **Host Filtering**: Use `--limit <host_or_group>` to surgically target specific infrastructure subsets.
 - **Config seeding**: All `config:` block keys are automatically available as `${key}` throughout the playbook — no `set_fact` needed
 - **Variable chaining**: `set_fact` values can themselves reference earlier `${vars}`, enabling derived variables
 - **Mid-playbook overrides**: Call `set_fact` again at any point to update a variable for all following tasks
 - **Universal interpolation**: `${var}` works in every string field across all modules (`shell.cmd`, `file.path`, `debug.msg`, `archive.src/dest`, etc.)
+- **Enhanced Modules**: 
+  - `stat`: Fetch rich file/directory telemetry into nested maps (`{{ file_info.stat.size }}`).
+  - `copy`: Now supports `content` mode to write templated strings directly to disk.
+  - **Native OS Package Aliases**: Use direct `apt:`, `yum:`, `brew:`, `winget:`, and `choco:` module syntax.
+  - **Dry-run (`--check`)**: `copy`, `file`, and `remove` now cleanly simulate their execution without mutating disk state.
 
 ### v1.6 "Sentinel"
 - **[Role Package Manager](#roles--package-manager)**: Install reusable automation roles from any Git repository with `npkm roles install`
@@ -303,10 +310,12 @@ Inline TDD-style assertions on task command output — fail fast if expectations
 | `template` | Render templated config files |
 | `get_url` | Download remote files |
 | `archive`, `unzip` | Compress / extract |
-| `package` | brew / apt / yum / winget / choco |
+| `package` | Generic package manager abstraction |
+| `apt`, `yum`, `brew`, `winget`, `choco` | OS-specific package manager native aliases |
 | `service`, `systemd` | Manage system daemons |
 | `user` | Create / remove system users |
 | `cron` | Manage crontab entries |
+| `stat` | Retrieve file or file system status |
 | `git` | Clone or pull repositories |
 | `path` | Modify `$PATH` |
 | `debug`, `fail` | Output and control flow |
@@ -402,6 +411,7 @@ Options:
   --diff                show file diffs
   --report              generate HTML + JSON execution report
   --step                interactive task-by-task confirmation
+  --limit <hosts>       limit execution to specific hosts or groups
   --labels <csv>        run only tasks matching labels
   --names  <csv>        run only tasks matching names
   -i <file>             inventory file
