@@ -139,9 +139,12 @@
   (execute [this]
     (let [s (:spec this)
           conn (:__connection__ s)
+          path (:path s)
           state (:state s)
-          path (:path s)]
-      (if conn
+          is-dry-run (or (:__dry_run__ (:__vars__ s)) false)]
+      (if is-dry-run
+        "  skipping module execution (dry-run)"
+        (if conn
         (do
           (if (= state "directory")
             (ssh/ssh-exec conn (str "mkdir -p '" path "'"))
@@ -178,41 +181,55 @@
   (execute [this]
     (let [s (:spec this)
           conn (:__connection__ s)
-          src (str/trim-end (:src s) "/\\")
-          dest (str/trim-end (:dest s) "/\\")]
-      (if conn
-        (do
-          (if (io/directory? src)
-            (let [entries (io/file-seq src)]
-              (loop [rem entries]
-                (if (empty? rem) nil
-                  (let [e (first rem)
-                        rel (subs e (count src) (count e))
-                        target (str dest rel)]
-                    (if (io/directory? e)
-                      (ssh/ssh-exec conn (str "mkdir -p '" target "'"))
-                      (ssh/ssh-upload conn e target))
-                    (recur (rest rem))))))
-            (ssh/ssh-upload conn src dest))
-          nil)
-        (if (io/directory? src)
-          (let [entries (io/file-seq src)]
-            (loop [rem entries]
-              (if (empty? rem) nil
-                (let [e (first rem)
-                      rel (subs e (count src) (count e))
-                      target (str dest rel)]
-                  (if (io/directory? e) (io/make-dir target) (io/copy e target))
-                  (recur (rest rem))))))
-          (do (io/copy src dest) nil))))))
+          src (if (:src s) (str/trim-end (:src s) "/\\") nil)
+          dest (str/trim-end (:dest s) "/\\")
+          content (:content s)
+          is-dry-run (or (:__dry_run__ (:__vars__ s)) false)]
+      (if is-dry-run
+        "  skipping module execution (dry-run)"
+        (if conn
+        (if content
+          (sys-ssh-exec (assoc conn :debug true) (str "sh -c 'cat << '\\''EOF'\\'' > " dest "\n" content "\nEOF'"))
+          (do
+            (if (not src) (throw "copy requires src or content"))
+            (if (io/directory? src)
+              (let [entries (io/file-seq src)]
+                (loop [rem entries]
+                  (if (empty? rem) nil
+                    (let [e (first rem)
+                          rel (subs e (count src) (count e))
+                          target (str dest rel)]
+                      (if (io/directory? e)
+                        (ssh/ssh-exec conn (str "mkdir -p '" target "'"))
+                        (ssh/ssh-upload conn e target))
+                      (recur (rest rem))))))
+              (ssh/ssh-upload conn src dest))
+            nil))
+        (if content
+          (do (io/write-file dest content) nil)
+          (do
+            (if (not src) (throw "copy requires src or content"))
+            (if (io/directory? src)
+              (let [entries (io/file-seq src)]
+                (loop [rem entries]
+                  (if (empty? rem) nil
+                    (let [e (first rem)
+                          rel (subs e (count src) (count e))
+                          target (str dest rel)]
+                      (if (io/directory? e) (io/make-dir target) (io/copy e target))
+                      (recur (rest rem))))))
+              (do (io/copy src dest) nil))))))))
 
 (defrecord RemoveTask [spec]
   PlaybookTask
   (execute [this]
     (let [s (:spec this)
           conn (:__connection__ s)
-          path (:path s)]
-      (if conn
+          path (:path s)
+          is-dry-run (or (:__dry_run__ (:__vars__ s)) false)]
+      (if is-dry-run
+        "  skipping module execution (dry-run)"
+        (if conn
         (ssh/ssh-exec conn (str "rm -rf " path))
         (if (str/includes? path "*")
           (let [sep-idx (max (str/last-index-of path "/") (str/last-index-of path "\\"))
@@ -626,6 +643,30 @@
 
 
 
+(defrecord StatTask [spec]
+  PlaybookTask
+  (execute [this]
+    (let [s (:spec this)
+          path (:path s)
+          conn (:__connection__ s)]
+      (if conn
+        ;; Remote stat via SSH
+        (let [res (sys-ssh-exec (assoc conn :debug true) (str "stat -c '%s %F' '" path "' 2>/dev/null && echo EXISTS || echo MISSING"))]
+          (let [out (str/trim (:stdout res))]
+            (if (str/includes? out "EXISTS")
+              (let [lines (str/split out "\n")
+                    parts (str/split (first lines) " ")
+                    size (first parts)
+                    ftype (str/join " " (rest parts))]
+                {:stat {:exists true :path path :size size :isdir (str/includes? ftype "directory")}})
+              {:stat {:exists false :path path :size 0 :isdir false}})))
+        ;; Local stat
+        (let [exists (io/exists? path)]
+          (if exists
+            (let [stat (sys-file-stat path)]
+              {:stat {:exists true :path path :size (or (:size stat) 0) :isdir (or (:is-dir stat) false)}})
+            {:stat {:exists false :path path :size 0 :isdir false}}))))))
+
 (def playbook-task-registry
   {:shell ShellTask
    :command CommandTask
@@ -649,9 +690,15 @@
    :template TemplateTask
    :coni ConiTask
    :path PathTask
+   :stat StatTask
    :powershell PowershellTask
    :set_fact SetFactTask
-   :test TestTask})
+   :test TestTask
+   :apt (fn [s] (PackageTask (assoc s :manager "apt-get")))
+   :yum (fn [s] (PackageTask (assoc s :manager "yum")))
+   :brew (fn [s] (PackageTask (assoc s :manager "brew")))
+   :winget (fn [s] (PackageTask (assoc s :manager "winget")))
+   :choco (fn [s] (PackageTask (assoc s :manager "choco")))} )
 
 (def playbook-task-keys
   (keys playbook-task-registry))
@@ -900,7 +947,7 @@ v-val v-clean
             delay-ms (* 1000 delay-sec)
             out-str (loop [attempt 1]
                       (let [res (try
-                                  (let [supports-check (or (= k :template) (= k :lineinfile) (= k :replace))
+                                  (let [supports-check (or (= k :template) (= k :lineinfile) (= k :replace) (= k :copy) (= k :file) (= k :remove))
                                         o (if (and (:__dry_run__ runtime-vars) (not supports-check))
                                             "  skipping module execution (dry-run)"
                                             (execute (constructor v-with-vars)))]
@@ -949,7 +996,7 @@ v-val v-clean
                 (println "\033[32m  ok (dry-run)\033[0m\n")
                 (if is-changed (println "\033[33m  changed\033[0m\n") (println "\033[32m  ok\033[0m\n"))))
             {:vars (if reg-key
-                     (assoc runtime-vars reg-key (str/trim (if out-str (str out-str) "")))
+                     (assoc runtime-vars (keyword reg-key) (if (map? out-str) out-str {:stdout (str/trim (if out-str (str out-str) "")) :stderr "" :rc 0}))
                      runtime-vars)
              :output (str/trim (if out-str (str out-str) ""))
              :changed is-changed})))
@@ -1813,4 +1860,5 @@ v-val v-clean
   (do
     (run)
     (dump-logs)))
+
 
