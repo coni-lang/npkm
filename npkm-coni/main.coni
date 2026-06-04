@@ -29,18 +29,21 @@
                     filters (rest expr-parts)
                     base-val-raw (get vars (keyword var-name))
                     base-val (if base-val-raw base-val-raw (get vars var-name))
-                    final-val (loop [f-rem filters
-                                     curr-val base-val]
+                    final-val (if (and (nil? base-val) (= var-name "item"))
+                                "{{ item }}"
+                                (loop [f-rem filters
+                                       curr-val base-val]
                                 (if (empty? f-rem)
                                   curr-val
                                   (let [f (str/trim (first f-rem))]
+
                                     (if (str/starts-with? f "default(")
                                       (let [def-val (str/slice f 9 (- (count f) 2))]
                                         (recur (rest f-rem) (if (or (nil? curr-val) (= curr-val "")) def-val curr-val)))
                                       (if (str/starts-with? f "join(")
                                         (let [join-str (str/slice f 6 (- (count f) 2))]
                                           (recur (rest f-rem) (if (vector? curr-val) (str/join join-str curr-val) curr-val)))
-                                        (recur (rest f-rem) curr-val))))))]
+                                        (recur (rest f-rem) curr-val)))))))]
                 (recur (rest rem) (str acc final-val rest-str))))))))))
 
 (defn apply-filters-recursive [node vars]
