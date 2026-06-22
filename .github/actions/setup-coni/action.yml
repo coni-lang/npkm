@@ -6,8 +6,8 @@ runs:
     - name: Download Coni Compiler
       shell: bash
       run: |
-        git clone https://gitea.hellonico.info/hellonico/coni-lang.git /tmp/coni-lang-src
-        cd /tmp/coni-lang-src
+        git clone https://gitea.hellonico.info/hellonico/coni-lang.git $GITHUB_WORKSPACE/../coni-lang
+        cd $GITHUB_WORKSPACE/../coni-lang
         CGO_ENABLED=0 go build -o coni .
         chmod +x coni
         mkdir -p $GITHUB_WORKSPACE/bin

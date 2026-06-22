@@ -1,2 +1,3 @@
-{:compiler {:git "https://gitea.hellonico.info/hellonico/coni-lang.git" :branch "main"}
- :dependencies {"libs" {:git "https://gitea.hellonico.info/hellonico/coni-lang.git/libs" :branch "main"}}}
+{:compiler {:path "../../coni-lang"}
+ :dependencies {"libs" {:path "../../coni-lang/libs"}}}
+
