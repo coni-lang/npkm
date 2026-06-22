@@ -13,3 +13,4 @@ runs:
         mkdir -p $GITHUB_WORKSPACE/bin
         mv coni $GITHUB_WORKSPACE/bin/coni
         echo "$GITHUB_WORKSPACE/bin" >> $GITHUB_PATH
+        echo "CONI_HOME=$GITHUB_WORKSPACE/../coni-lang" >> $GITHUB_ENV
