@@ -774,6 +774,7 @@
     (loop [rem lines
            curr-group "all"
            curr-host nil
+           in-children false
            acc {"all" {:hosts {}}}]
       (if (empty? rem)
         acc
@@ -781,35 +782,40 @@
               trim-line (str/trim line)
               is-comment (str/starts-with? trim-line "#")
               is-empty (= trim-line "")]
-          (if (or is-comment is-empty (= trim-line "all:") (= trim-line "hosts:"))
-            (recur (rest rem) (if (= trim-line "all:") "all" curr-group) curr-host acc)
-            (let [indent (- (count line) (count (str/trim line)))]
-              (if (and (str/ends-with? trim-line ":") (not (str/includes? trim-line " ")))
-                (let [name (subs trim-line 0 (- (count trim-line) 1))]
-                  (if (<= indent 2)
-                    (recur (rest rem) name nil (if (not (get acc name)) (assoc acc name {:hosts {}}) acc))
-                    (let [new-acc (if (not (get acc curr-group)) (assoc acc curr-group {:hosts {}}) acc)
-                          group-data (get new-acc curr-group)
-                          hosts-data (if (:hosts group-data) (:hosts group-data) {})
-                          new-hosts-data (assoc hosts-data name {})
+          (if (or is-comment is-empty (= trim-line "all:"))
+            (recur (rest rem) (if (= trim-line "all:") "all" curr-group) curr-host in-children acc)
+            ;; Skip structural keywords: hosts: and children:
+            (if (or (= trim-line "hosts:") (= trim-line "children:"))
+              (recur (rest rem) curr-group curr-host (if (= trim-line "children:") true in-children) acc)
+              (let [indent (- (count line) (count (str/trim line)))]
+                (if (and (str/ends-with? trim-line ":") (not (str/includes? trim-line " ")))
+                  (let [name (subs trim-line 0 (- (count trim-line) 1))]
+                    ;; If we're inside children: block, treat names at indent 4-6 as new groups
+                    ;; Also treat top-level names (indent <= 2) as groups
+                    (if (or (<= indent 2) (and in-children (<= indent 6) (nil? curr-host)))
+                      (recur (rest rem) name nil false (if (not (get acc name)) (assoc acc name {:hosts {}}) acc))
+                      (let [new-acc (if (not (get acc curr-group)) (assoc acc curr-group {:hosts {}}) acc)
+                            group-data (get new-acc curr-group)
+                            hosts-data (if (:hosts group-data) (:hosts group-data) {})
+                            new-hosts-data (assoc hosts-data name {})
+                            new-group-data (assoc group-data :hosts new-hosts-data)
+                            final-acc (assoc new-acc curr-group new-group-data)]
+                        (recur (rest rem) curr-group name false final-acc))))
+                  (if (and curr-group curr-host (str/includes? trim-line ":"))
+                    (let [colon-idx (str/index-of trim-line ":")
+                          k-str (str/trim (subs trim-line 0 colon-idx))
+                          v-str (str/trim (subs trim-line (+ colon-idx 1) (count trim-line)))
+                          v-clean (str/strip-quotes v-str)
+                          v-val v-clean
+                          group-data (get acc curr-group)
+                          hosts-data (:hosts group-data)
+                          host-data (get hosts-data curr-host)
+                          new-host-data (assoc host-data (keyword k-str) v-val)
+                          new-hosts-data (assoc hosts-data curr-host new-host-data)
                           new-group-data (assoc group-data :hosts new-hosts-data)
-                          final-acc (assoc new-acc curr-group new-group-data)]
-                      (recur (rest rem) curr-group name final-acc))))
-                (if (and curr-group curr-host (str/includes? trim-line ":"))
-                  (let [colon-idx (str/index-of trim-line ":")
-                        k-str (str/trim (subs trim-line 0 colon-idx))
-                        v-str (str/trim (subs trim-line (+ colon-idx 1) (count trim-line)))
-                        v-clean (str/strip-quotes v-str)
-v-val v-clean
-                        group-data (get acc curr-group)
-                        hosts-data (:hosts group-data)
-                        host-data (get hosts-data curr-host)
-                        new-host-data (assoc host-data (keyword k-str) v-val)
-                        new-hosts-data (assoc hosts-data curr-host new-host-data)
-                        new-group-data (assoc group-data :hosts new-hosts-data)
-                        final-acc (assoc acc curr-group new-group-data)]
-                    (recur (rest rem) curr-group curr-host final-acc))
-                  (recur (rest rem) curr-group curr-host acc))))))))))
+                          final-acc (assoc acc curr-group new-group-data)]
+                      (recur (rest rem) curr-group curr-host false final-acc))
+                    (recur (rest rem) curr-group curr-host in-children acc)))))))))))
 
 (defn parse-inventory [path]
   (if (io/exists? path)
@@ -1370,7 +1376,8 @@ v-val v-clean
         conn-cfg (if (and (not= host "localhost") (not= host ""))
                    {:host (if (:ansible_host host-vars) (:ansible_host host-vars) host)
                     :user (if (:ansible_user host-vars) (:ansible_user host-vars) nil)
-                    :key (if (:ansible_ssh_private_key_file host-vars) (:ansible_ssh_private_key_file host-vars) nil)
+                    :key (if (:ansible_ssh_private_key_file host-vars) (:ansible_ssh_private_key_file host-vars)
+                           (if (:ansible_private_key_file host-vars) (:ansible_private_key_file host-vars) nil))
                     :password (if (:ansible_ssh_pass host-vars) (:ansible_ssh_pass host-vars) nil)
                     :port (if (:ansible_port host-vars) (:ansible_port host-vars) 22)}
                    nil)
@@ -1449,6 +1456,12 @@ v-val v-clean
               base-vars (merge play-vars p-vars {:__debug__ is-debug :__dry_run__ is-dry-run :__diff__ is-diff :__step__ @global-step-mode})
               tasks (:tasks play)
               target-hosts (if (and inventory (> (count (keys inventory)) 0)) (get-hosts inventory target-group) (if (= target-group "localhost") ["localhost"] [target-group]))]
+          (if (empty? target-hosts)
+            (do (if is-bw
+                  (println (str "ERROR: No hosts matched for group '" target-group "'. Check your inventory file."))
+                  (println (str "\033[31mERROR: No hosts matched for group '" target-group "'. Check your inventory file.\033[0m")))
+                (sys-exit 1))
+            nil)
           (if (and (> forks 1) (> (count target-hosts) 1))
             ;; Parallel host execution: spawn one goroutine per host, fan-in on done-ch
             (let [done-ch (chan (count target-hosts))]
