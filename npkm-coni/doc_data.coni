@@ -134,6 +134,91 @@ npkm --limit web_servers playbook.yml
 
 ---
 
+## Windows Software Provisioning Pattern
+
+NPKM excels at managing Windows environments, particularly when provisioning machines from a shared configuration. A common pattern is to define a shared list of software (e.g., in a \\`vars\\` block or separate file) and use a shared playbook script to install them.
+
+In air-gapped or restricted network environments where web access is limited, traditional package managers (\\`choco\\`, \\`winget\\`) that rely on internet repositories will fail. Instead, a highly reliable and portable approach is to use an \"offline zip\" extraction pattern:
+
+1. **Pre-fetch:** Administrators download the portable \\`.zip\\` distributions of required tools and place them on an internal shared network drive (e.g., \\`\\\\\\\\shared-server\\\\offline_tools\\\\\\`).
+2. **Direct Extraction:** NPKM accesses these \\`.zip\\` files directly from the network share and extracts them straight to the target machines. The base path for extraction (e.g., \\`C:\\\\tools\\\\\\`) is easily configured via playbook variables.
+3. **Efficiency:** By extracting directly from the network stream, we avoid the overhead of running \\`.exe\\` or \\`.msi\\` installers, prevent registry bloat, and bypass the need to copy the \\`.zip\\` archive locally before extraction.
+4. **Configuration:** NPKM can simultaneously push predefined property files or dynamically template configuration files directly into the extracted tool directories.
+5. **Environment Paths:** The built-in \\`path\\` module ensures the newly extracted binaries are immediately appended to the system \\`%PATH%\\`.
+
+### Workflow Diagram
+
+\\`\\`\\`mermaid
+flowchart TD
+    A[Start NPKM Playbook] --> B[Load Config: Software List & Base Path]
+    B --> C[Ensure Base Path exists on Target]
+    C --> D{For each Tool}
+    D -- Read --> E[(Shared Network Drive)]
+    E -- Stream Zip --> F[Extract directly to BasePath\\\\ToolName]
+    F --> H[Push Config & Property Files]
+    H --> I[Add Tool Binaries to System PATH]
+    I --> D
+    D -- All Tools Done --> G[Provisioning Complete]
+\\`\\`\\`
+
+Here is an example playbook (\\`windows-setup.yml\\`) demonstrating this approach in full:
+
+\\`\\`\\`yaml
+- name: Provision Windows Tooling
+  hosts: windows_workstations
+  vars:
+    tools_dir: \"C:\\\\\\\\tools\"
+    software_list:
+      - name: \"nuke\"
+        src: \"\\\\\\\\\\\\\\\\shared-server\\\\\\\\offline_tools\\\\\\\\nuke.zip\"
+        dest: \"\\${tools_dir}\\\\\\\\nuke\"
+        conf_src: \"files/nuke_settings.edn\"
+        conf_dest: \"\\${tools_dir}\\\\\\\\nuke\\\\\\\\nuke.edn\"
+        bin_path: \"\\${tools_dir}\\\\\\\\nuke\\\\\\\\bin\"
+      - name: \"maven\"
+        src: \"\\\\\\\\\\\\\\\\shared-server\\\\\\\\offline_tools\\\\\\\\maven.zip\"
+        dest: \"\\${tools_dir}\\\\\\\\maven\"
+        conf_src: \"files/maven_settings.xml\"
+        conf_dest: \"\\${tools_dir}\\\\\\\\maven\\\\\\\\conf\\\\\\\\settings.xml\"
+        bin_path: \"\\${tools_dir}\\\\\\\\maven\\\\\\\\bin\"
+
+  tasks:
+    - name: Ensure base tools directory exists
+      file:
+        path: \"{{ tools_dir }}\"
+        state: directory
+
+    - name: Extract zip distributions from shared storage
+      unzip:
+        src: \"{{ item.src }}\"
+        dest: \"{{ item.dest }}\"
+        creates: \"{{ item.dest }}\" # Skips if already extracted
+      loop: \"{{ software_list }}\"
+
+    - name: Apply tool configuration files
+      copy:
+        src: \"{{ item.conf_src }}\"
+        dest: \"{{ item.conf_dest }}\"
+      loop: \"{{ software_list }}\"
+
+    - name: Add tool binaries to System PATH
+      path:
+        name: \"{{ item.bin_path }}\"
+        state: present
+        scope: system
+      loop: \"{{ software_list }}\"
+
+    # Alternatively, traditional installers can also be used if needed:
+    # - name: Install Git via Chocolatey
+    #   choco:
+    #     name: git
+    #     state: present
+\\`\\`\\`
+
+This shared script method allows teams to maintain a single, version-controlled list of software that NPKM can reliably provision across multiple Windows machines, even without internet access.
+
+---
+
 ## Roles — Package Manager
 
 Roles are reusable, Git-versioned task collections. Install them from any Git repository and reference them in your playbooks via \\`include_tasks\\`.

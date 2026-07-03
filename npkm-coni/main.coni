@@ -671,6 +671,33 @@
 
 ;; yaml-to-edn is provided by libs/yaml/src/yaml.coni (yaml/yaml-to-edn)
 
+(defn extract-roles-from-yaml [content]
+  (let [lines (str/split content "\n")]
+    (loop [rem lines
+           in-roles false
+           current-play -1
+           roles []
+           all-roles {}]
+      (if (empty? rem)
+        (if (> (count roles) 0) (assoc all-roles current-play roles) all-roles)
+        (let [line (first rem)
+              trim-l (str/trim line)
+              indent (- (count line) (count trim-l))]
+          (if (and (= indent 0) (str/starts-with? trim-l "- "))
+            (let [new-all (if (> (count roles) 0) (assoc all-roles current-play roles) all-roles)]
+              (recur (rest rem) false (+ current-play 1) [] new-all))
+            (if (and (= indent 2) (= trim-l "roles:"))
+              (recur (rest rem) true current-play roles all-roles)
+              (if (and in-roles (>= indent 4))
+                (if (str/starts-with? trim-l "- ")
+                  (let [rname (str/trim (subs trim-l 2 (count trim-l)))]
+                    (recur (rest rem) true current-play (conj roles rname) all-roles))
+                  (recur (rest rem) true current-play roles all-roles))
+                (if (and in-roles (< indent 4) (not (= trim-l "")) (not (str/starts-with? trim-l "#")))
+                  (let [new-all (if (> (count roles) 0) (assoc all-roles current-play roles) all-roles)]
+                    (recur (rest rem) false current-play [] new-all))
+                  (recur (rest rem) in-roles current-play roles all-roles))))))))))
+
 (defn parse-playbook [file raw-content]
   (let [content (if (str/starts-with? raw-content "$NPKM_VAULT;1.0;AES256") 
                   (let [tmp (str "/tmp/npkm_vault_read_" (str/trim (:stdout (shell/sh "date +%s%N"))))]
@@ -691,15 +718,44 @@
                       k-str (if (str/starts-with? (str k) ":") (str/substring (str k) 1 (count (str k))) (str k))]
                   (recur (rest k-list) (assoc acc k-str (get local-cfg k))))))
         interp-content (yaml/interpolate-config content cfg)]
-    (let [res (if is-yaml
+    (let [roles-manual-map (if is-yaml (extract-roles-from-yaml interp-content) {})
+          res (if is-yaml
                 (read-string (yaml/yaml-to-edn interp-content))
                 (let [parsed (read-string interp-content)]
                   (if (map? parsed)
                     (if (:tasks parsed)
                       [parsed]
                       parsed)
-                    parsed)))]
-      {:tasks res :cfg cfg})))
+                    parsed)))
+          norm-res (if (map? res) [res] (if (vector? res) res []))
+          is-play-list (if (> (count norm-res) 0)
+                         (let [f (first norm-res)]
+                           (or (:tasks f) (:hosts f) (:roles f) (and is-yaml (> (count roles-manual-map) 0))))
+                         false)
+          final-res (if (not is-play-list)
+                      res
+                      (loop [rem norm-res acc [] p-idx 0]
+                        (if (empty? rem) acc
+                          (let [play (first rem)
+                                roles-raw (if (:roles play) (:roles play) (get play "roles"))
+                                roles-list (if (empty? roles-raw) (if (get roles-manual-map p-idx) (get roles-manual-map p-idx) [])
+                                             (if (vector? roles-raw) roles-raw (if roles-raw [roles-raw] [])))
+                                roles roles-list
+                                tasks-raw (if (:tasks play) (:tasks play) (get play "tasks" []))
+                                tasks (if (vector? tasks-raw) tasks-raw (if tasks-raw [tasks-raw] []))
+                                role-tasks (loop [r-rem roles r-acc []]
+                                             (if (empty? r-rem) r-acc
+                                               (let [r (first r-rem)
+                                                     r-name (if (string? r) r (if (:role r) (:role r) (get r "role" (str r))))
+                                                     r-vars (if (map? r) (dissoc (dissoc r :role) "role") {})
+                                                     t-obj {:name (str "role: " r-name) :include_tasks (str "roles/" r-name "/tasks/main.yml") :vars r-vars}]
+                                                 (recur (rest r-rem) (conj r-acc t-obj)))))
+                                new-tasks (loop [t-rem tasks t-acc role-tasks]
+                                            (if (empty? t-rem) t-acc
+                                              (recur (rest t-rem) (conj t-acc (first t-rem)))))
+                                new-play (assoc play :tasks new-tasks)]
+                            (recur (rest rem) (conj acc new-play) (+ p-idx 1))))))]
+      {:tasks final-res :cfg cfg})))
 
 
 
@@ -774,48 +830,92 @@
     (loop [rem lines
            curr-group "all"
            curr-host nil
-           in-children false
-           acc {"all" {:hosts {}}}]
+           in-block "none"
+           acc {"all" {:hosts {} :vars {}}}
+           group-stack []]
       (if (empty? rem)
-        acc
+        (let [all-groups (keys acc)
+              acc-merged (loop [g-rem all-groups g-acc acc]
+                           (if (empty? g-rem) g-acc
+                             (let [g (first g-rem)
+                                   g-obj (get g-acc g)
+                                   g-hosts (:hosts g-obj)
+                                   g-vars (if (:vars g-obj) (:vars g-obj) {})
+                                   all-vars (if (:vars (get g-acc "all")) (:vars (get g-acc "all")) {})
+                                   merged-vars (merge all-vars g-vars)
+                                   new-hosts (if (empty? merged-vars) g-hosts
+                                               (loop [h-rem (keys g-hosts) h-acc {}]
+                                                 (if (empty? h-rem) h-acc
+                                                   (let [h (first h-rem)]
+                                                     (recur (rest h-rem) (assoc h-acc h (merge merged-vars (get g-hosts h))))))))
+                                   new-g-obj (assoc g-obj :hosts new-hosts)]
+                               (recur (rest g-rem) (assoc g-acc g new-g-obj)))))
+              all-hosts (loop [g-rem all-groups h-acc (:hosts (get acc-merged "all"))]
+                          (if (empty? g-rem) h-acc
+                            (let [g (first g-rem)
+                                  g-hosts (:hosts (get acc-merged g))]
+                              (if (= g "all")
+                                (recur (rest g-rem) h-acc)
+                                (recur (rest g-rem) (merge h-acc g-hosts))))))
+              final-acc (assoc acc-merged "all" (assoc (get acc-merged "all") :hosts all-hosts))]
+          final-acc)
         (let [line (first rem)
               trim-line (str/trim line)
               is-comment (str/starts-with? trim-line "#")
               is-empty (= trim-line "")]
-          (if (or is-comment is-empty (= trim-line "all:"))
-            (recur (rest rem) (if (= trim-line "all:") "all" curr-group) curr-host in-children acc)
-            ;; Skip structural keywords: hosts: and children:
-            (if (or (= trim-line "hosts:") (= trim-line "children:"))
-              (recur (rest rem) curr-group curr-host (if (= trim-line "children:") true in-children) acc)
-              (let [indent (- (count line) (count (str/trim line)))]
-                (if (and (str/ends-with? trim-line ":") (not (str/includes? trim-line " ")))
-                  (let [name (subs trim-line 0 (- (count trim-line) 1))]
-                    ;; If we're inside children: block, treat names at indent 4-6 as new groups
-                    ;; Also treat top-level names (indent <= 2) as groups
-                    (if (or (<= indent 2) (and in-children (<= indent 6) (nil? curr-host)))
-                      (recur (rest rem) name nil false (if (not (get acc name)) (assoc acc name {:hosts {}}) acc))
-                      (let [new-acc (if (not (get acc curr-group)) (assoc acc curr-group {:hosts {}}) acc)
-                            group-data (get new-acc curr-group)
-                            hosts-data (if (:hosts group-data) (:hosts group-data) {})
-                            new-hosts-data (assoc hosts-data name {})
-                            new-group-data (assoc group-data :hosts new-hosts-data)
-                            final-acc (assoc new-acc curr-group new-group-data)]
-                        (recur (rest rem) curr-group name false final-acc))))
-                  (if (and curr-group curr-host (str/includes? trim-line ":"))
-                    (let [colon-idx (str/index-of trim-line ":")
-                          k-str (str/trim (subs trim-line 0 colon-idx))
-                          v-str (str/trim (subs trim-line (+ colon-idx 1) (count trim-line)))
-                          v-clean (str/strip-quotes v-str)
-                          v-val v-clean
-                          group-data (get acc curr-group)
-                          hosts-data (:hosts group-data)
-                          host-data (get hosts-data curr-host)
-                          new-host-data (assoc host-data (keyword k-str) v-val)
-                          new-hosts-data (assoc hosts-data curr-host new-host-data)
-                          new-group-data (assoc group-data :hosts new-hosts-data)
-                          final-acc (assoc acc curr-group new-group-data)]
-                      (recur (rest rem) curr-group curr-host false final-acc))
-                    (recur (rest rem) curr-group curr-host in-children acc)))))))))))
+          (if (or is-comment is-empty)
+            (recur (rest rem) curr-group curr-host in-block acc group-stack)
+            (let [indent (- (count line) (count (str/trim line)))
+                  is-node (and (str/ends-with? trim-line ":") (not (str/includes? trim-line " ")))]
+              (if is-node
+                (let [name (subs trim-line 0 (- (count trim-line) 1))]
+                  (if (= name "all")
+                    (recur (rest rem) "all" nil "none" acc [])
+                    (if (= name "hosts")
+                      (recur (rest rem) curr-group nil "hosts" acc group-stack)
+                      (if (= name "vars")
+                        (recur (rest rem) curr-group nil "vars" acc group-stack)
+                        (if (= name "children")
+                          (recur (rest rem) curr-group nil "children" acc group-stack)
+                          (if (= in-block "children")
+                            (let [new-acc (if (not (get acc name)) (assoc acc name {:hosts {} :vars {}}) acc)]
+                              (recur (rest rem) name nil "none" new-acc (conj group-stack name)))
+                            (if (= in-block "hosts")
+                              (let [new-acc (if (not (get acc curr-group)) (assoc acc curr-group {:hosts {} :vars {}}) acc)
+                                    g-obj (get new-acc curr-group)
+                                    hosts-data (:hosts g-obj)
+                                    new-hosts-data (assoc hosts-data name {})
+                                    new-g-obj (assoc g-obj :hosts new-hosts-data)
+                                    final-acc (assoc new-acc curr-group new-g-obj)]
+                                (recur (rest rem) curr-group name "hosts" final-acc group-stack))
+                              (if (<= indent 2)
+                                (let [new-acc (if (not (get acc name)) (assoc acc name {:hosts {} :vars {}}) acc)]
+                                  (recur (rest rem) name nil "none" new-acc []))
+                                (recur (rest rem) curr-group curr-host in-block acc group-stack)))))))))
+                (if (str/includes? trim-line ":")
+                  (let [colon-idx (str/index-of trim-line ":")
+                        k-str (str/trim (subs trim-line 0 colon-idx))
+                        v-str (str/trim (subs trim-line (+ colon-idx 1) (count trim-line)))
+                        v-clean (str/strip-quotes v-str)
+                        v-val v-clean]
+                    (if (= in-block "vars")
+                      (let [g-obj (get acc curr-group)
+                            vars-data (if (:vars g-obj) (:vars g-obj) {})
+                            new-vars-data (assoc vars-data (keyword k-str) v-val)
+                            new-g-obj (assoc g-obj :vars new-vars-data)
+                            final-acc (assoc acc curr-group new-g-obj)]
+                        (recur (rest rem) curr-group curr-host in-block final-acc group-stack))
+                      (if (and (= in-block "hosts") curr-host)
+                        (let [g-obj (get acc curr-group)
+                              hosts-data (:hosts g-obj)
+                              host-data (get hosts-data curr-host)
+                              new-host-data (assoc host-data (keyword k-str) v-val)
+                              new-hosts-data (assoc hosts-data curr-host new-host-data)
+                              new-g-obj (assoc g-obj :hosts new-hosts-data)
+                              final-acc (assoc acc curr-group new-g-obj)]
+                          (recur (rest rem) curr-group curr-host in-block final-acc group-stack))
+                        (recur (rest rem) curr-group curr-host in-block acc group-stack))))
+                  (recur (rest rem) curr-group curr-host in-block acc group-stack))))))))))
 
 (defn parse-inventory [path]
   (if (io/exists? path)
