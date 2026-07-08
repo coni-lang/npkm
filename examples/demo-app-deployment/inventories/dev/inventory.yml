@@ -1,0 +1,41 @@
+# all:
+#   vars:
+#     ansible_user: ansible
+#     ansible_ssh_private_key_file: "~/.ssh/id_rsa"
+#     ansible_port: 22
+    
+#     children:
+#       poc_nodes:
+#         hosts:
+#           bb:
+#             ansible_host: 192.168.64.2
+#           if:
+#             ansible_host: 192.168.64.3
+
+# all:
+#   vars:
+#     poc_nodes:
+#       hosts:
+#           bb:
+#             ansible_host: 192.168.64.2
+#             ansible_user: ansible
+#             # ansible_ssh_private_key_file: D:/calypso/keys/calypso
+#             ansible_port: 22
+#           if:
+#             ansible_host: 192.168.64.2
+#             ansible_user: ansible
+#             # ansible_ssh_private_key_file: D:/calypso/keys/calypso
+#             ansible_port: 22
+
+all:
+  hosts:
+    bb:
+      ansible_host: 192.168.64.2
+      ansible_user: ansible
+      # ansible_ssh_private_key_file: "~/.ssh/id_rsa"
+      ansible_port: 22
+    if:
+      ansible_host: 192.168.64.3
+      ansible_user: ansible
+      # ansible_ssh_private_key_file: "~/.ssh/id_rsa"
+      ansible_port: 22

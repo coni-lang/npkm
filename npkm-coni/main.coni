@@ -828,94 +828,72 @@
 (defn parse-inventory-yaml [content]
   (let [lines (str/split content "\n")]
     (loop [rem lines
-           curr-group "all"
-           curr-host nil
-           in-block "none"
            acc {"all" {:hosts {} :vars {}}}
-           group-stack []]
+           path []]
       (if (empty? rem)
         (let [all-groups (keys acc)
-              acc-merged (loop [g-rem all-groups g-acc acc]
-                           (if (empty? g-rem) g-acc
-                             (let [g (first g-rem)
-                                   g-obj (get g-acc g)
-                                   g-hosts (:hosts g-obj)
-                                   g-vars (if (:vars g-obj) (:vars g-obj) {})
-                                   all-vars (if (:vars (get g-acc "all")) (:vars (get g-acc "all")) {})
-                                   merged-vars (merge all-vars g-vars)
-                                   new-hosts (if (empty? merged-vars) g-hosts
-                                               (loop [h-rem (keys g-hosts) h-acc {}]
-                                                 (if (empty? h-rem) h-acc
-                                                   (let [h (first h-rem)]
-                                                     (recur (rest h-rem) (assoc h-acc h (merge merged-vars (get g-hosts h))))))))
-                                   new-g-obj (assoc g-obj :hosts new-hosts)]
-                               (recur (rest g-rem) (assoc g-acc g new-g-obj)))))
-              all-hosts (loop [g-rem all-groups h-acc (:hosts (get acc-merged "all"))]
+              all-hosts (loop [g-rem all-groups h-acc (:hosts (get acc "all"))]
                           (if (empty? g-rem) h-acc
                             (let [g (first g-rem)
-                                  g-hosts (:hosts (get acc-merged g))]
+                                  g-hosts (:hosts (get acc g))]
                               (if (= g "all")
                                 (recur (rest g-rem) h-acc)
                                 (recur (rest g-rem) (merge h-acc g-hosts))))))
-              final-acc (assoc acc-merged "all" (assoc (get acc-merged "all") :hosts all-hosts))]
+              final-acc (assoc acc "all" (assoc (get acc "all") :hosts all-hosts))]
           final-acc)
         (let [line (first rem)
               trim-line (str/trim line)
               is-comment (str/starts-with? trim-line "#")
               is-empty (= trim-line "")]
           (if (or is-comment is-empty)
-            (recur (rest rem) curr-group curr-host in-block acc group-stack)
-            (let [indent (- (count line) (count (str/trim line)))
+            (recur (rest rem) acc path)
+            (let [indent (- (count line) (count trim-line))
+                  new-path (loop [p path]
+                             (if (empty? p) []
+                               (if (< (:indent (last p)) indent) p
+                                 (recur (drop-last p)))))
                   is-node (and (str/ends-with? trim-line ":") (not (str/includes? trim-line " ")))]
               (if is-node
-                (let [name (subs trim-line 0 (- (count trim-line) 1))]
-                  (if (= name "all")
-                    (recur (rest rem) "all" nil "none" acc [])
-                    (if (= name "hosts")
-                      (recur (rest rem) curr-group nil "hosts" acc group-stack)
-                      (if (= name "vars")
-                        (recur (rest rem) curr-group nil "vars" acc group-stack)
-                        (if (= name "children")
-                          (recur (rest rem) curr-group nil "children" acc group-stack)
-                          (if (= in-block "children")
-                            (let [new-acc (if (not (get acc name)) (assoc acc name {:hosts {} :vars {}}) acc)]
-                              (recur (rest rem) name nil "none" new-acc (conj group-stack name)))
-                            (if (= in-block "hosts")
-                              (let [new-acc (if (not (get acc curr-group)) (assoc acc curr-group {:hosts {} :vars {}}) acc)
-                                    g-obj (get new-acc curr-group)
-                                    hosts-data (:hosts g-obj)
-                                    new-hosts-data (assoc hosts-data name {})
-                                    new-g-obj (assoc g-obj :hosts new-hosts-data)
-                                    final-acc (assoc new-acc curr-group new-g-obj)]
-                                (recur (rest rem) curr-group name "hosts" final-acc group-stack))
-                              (if (<= indent 2)
-                                (let [new-acc (if (not (get acc name)) (assoc acc name {:hosts {} :vars {}}) acc)]
-                                  (recur (rest rem) name nil "none" new-acc []))
-                                (recur (rest rem) curr-group curr-host in-block acc group-stack)))))))))
+                (let [name (subs trim-line 0 (- (count trim-line) 1))
+                      node {:name name :indent indent}
+                      final-path (conj new-path node)
+                      parent (if (> (count new-path) 0) (:name (last new-path)) nil)
+                      new-acc (if (= parent "children")
+                                (if (not (get acc name)) (assoc acc name {:hosts {} :vars {}}) acc)
+                                (if (= parent "hosts")
+                                  (let [group-node (if (> (count new-path) 1) (:name (nth new-path (- (count new-path) 2))) "all")
+                                        g-obj (if (get acc group-node) (get acc group-node) {:hosts {} :vars {}})
+                                        hosts-data (if (:hosts g-obj) (:hosts g-obj) {})
+                                        new-hosts-data (assoc hosts-data name {})
+                                        new-g-obj (assoc g-obj :hosts new-hosts-data)]
+                                    (assoc acc group-node new-g-obj))
+                                  acc))]
+                  (recur (rest rem) new-acc final-path))
                 (if (str/includes? trim-line ":")
                   (let [colon-idx (str/index-of trim-line ":")
                         k-str (str/trim (subs trim-line 0 colon-idx))
                         v-str (str/trim (subs trim-line (+ colon-idx 1) (count trim-line)))
-                        v-clean (str/strip-quotes v-str)
-                        v-val v-clean]
-                    (if (= in-block "vars")
-                      (let [g-obj (get acc curr-group)
+                        v-val (str/strip-quotes v-str)
+                        parent (if (> (count new-path) 0) (:name (last new-path)) nil)]
+                    (if (= parent "vars")
+                      (let [group-node (if (> (count new-path) 1) (:name (nth new-path (- (count new-path) 2))) "all")
+                            g-obj (if (get acc group-node) (get acc group-node) {:hosts {} :vars {}})
                             vars-data (if (:vars g-obj) (:vars g-obj) {})
                             new-vars-data (assoc vars-data (keyword k-str) v-val)
-                            new-g-obj (assoc g-obj :vars new-vars-data)
-                            final-acc (assoc acc curr-group new-g-obj)]
-                        (recur (rest rem) curr-group curr-host in-block final-acc group-stack))
-                      (if (and (= in-block "hosts") curr-host)
-                        (let [g-obj (get acc curr-group)
-                              hosts-data (:hosts g-obj)
-                              host-data (get hosts-data curr-host)
+                            new-g-obj (assoc g-obj :vars new-vars-data)]
+                        (recur (rest rem) (assoc acc group-node new-g-obj) new-path))
+                      (if (not (or (= parent "children") (= parent "hosts")))
+                        (let [host-node parent
+                              group-node (if (> (count new-path) 2) (:name (nth new-path (- (count new-path) 3))) "all")
+                              g-obj (if (get acc group-node) (get acc group-node) {:hosts {} :vars {}})
+                              hosts-data (if (:hosts g-obj) (:hosts g-obj) {})
+                              host-data (if (get hosts-data host-node) (get hosts-data host-node) {})
                               new-host-data (assoc host-data (keyword k-str) v-val)
-                              new-hosts-data (assoc hosts-data curr-host new-host-data)
-                              new-g-obj (assoc g-obj :hosts new-hosts-data)
-                              final-acc (assoc acc curr-group new-g-obj)]
-                          (recur (rest rem) curr-group curr-host in-block final-acc group-stack))
-                        (recur (rest rem) curr-group curr-host in-block acc group-stack))))
-                  (recur (rest rem) curr-group curr-host in-block acc group-stack))))))))))
+                              new-hosts-data (assoc hosts-data host-node new-host-data)
+                              new-g-obj (assoc g-obj :hosts new-hosts-data)]
+                          (recur (rest rem) (assoc acc group-node new-g-obj) new-path))
+                        (recur (rest rem) acc new-path))))
+                  (recur (rest rem) acc new-path))))))))))
 
 (defn load-external-vars [inventory inv-file]
   (let [inv-dir (if (str/includes? inv-file "/") (subs inv-file 0 (str/last-index-of inv-file "/")) ".")

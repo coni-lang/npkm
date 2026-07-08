@@ -1,0 +1,17 @@
+- name: Deploy to the environment
+  hosts: bb
+
+  roles:
+    - prepare_env
+  
+  tasks:
+    - name: Test tasks
+      debug:
+        msg: "Hello"
+
+    - name: Check Hostname
+      command: hostname
+    
+
+
+# Need to check role/
