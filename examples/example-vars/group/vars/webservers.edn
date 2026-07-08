@@ -1,0 +1,2 @@
+{:http_port 80
+ :service_type "frontend"}

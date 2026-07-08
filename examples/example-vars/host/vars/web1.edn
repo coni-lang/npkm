@@ -1,0 +1,2 @@
+{:http_port 8080
+ :custom_message "Hello from web1 (Canary Node)!"}

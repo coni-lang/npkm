@@ -1,0 +1,2 @@
+{:app_name "myapp"
+ :deploy_dir "/opt/myapp"}
