@@ -1101,8 +1101,15 @@
               (= (str actual) v)
               (if (= op "!=")
                 (not (= (str actual) v))
-                true)))
-          true))))
+                (if (and (= op "is") (= v "defined"))
+                  (not (nil? actual))
+                  true))))
+          (if (and (= (count parts) 4) (= (second parts) "is") (= (nth parts 2) "not") (= (nth parts 3) "defined"))
+            (let [k (first parts)
+                  k-kw (keyword k)
+                  actual (if (get vars k-kw) (get vars k-kw) (get vars k))]
+              (nil? actual))
+            true)))))
 
 (defn resolve-var-path [vars path]
   (let [parts (str/split path ".")]

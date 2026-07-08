@@ -18,3 +18,7 @@ npkm-coni.exe
 npkm-coni/npkm-coni.exe
 coni_local
 npkm-coni/build_date.txt
+.venv/
+.venv
+.venv-pptx/
+.venv-pptx

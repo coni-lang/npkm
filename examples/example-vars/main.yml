@@ -16,10 +16,8 @@
 
     - name: "Show db_port"
       debug:
-        msg: "DB Port: {{ db_port }}"
-      when: "db_port is defined"
+        msg: "DB Port: {{ db_port | default('Not showing because db_port is not defined for this host') }}"
 
     - name: "Show custom host message if defined (from host_vars)"
       debug:
-        msg: "Custom message: {{ custom_message }}"
-      when: "custom_message is defined"
+        msg: "Custom message: {{ custom_message | default('Not showing because custom_message is not defined for this host') }}"
