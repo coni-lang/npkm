@@ -917,8 +917,53 @@
                         (recur (rest rem) curr-group curr-host in-block acc group-stack))))
                   (recur (rest rem) curr-group curr-host in-block acc group-stack))))))))))
 
+(defn load-external-vars [inventory inv-file]
+  (let [inv-dir (if (str/includes? inv-file "/") (subs inv-file 0 (str/last-index-of inv-file "/")) ".")
+        groups (keys inventory)]
+    (loop [g-rem groups
+           g-acc inventory]
+      (if (empty? g-rem)
+        (let [all-vars (if (:vars (get g-acc "all")) (:vars (get g-acc "all")) (if (:vars (get g-acc :all)) (:vars (get g-acc :all)) {}))
+              final-groups (keys g-acc)]
+          (loop [fg-rem final-groups
+                 fg-acc g-acc]
+            (if (empty? fg-rem)
+              fg-acc
+              (let [g (first fg-rem)
+                    g-obj (get fg-acc g)
+                    g-vars (if (:vars g-obj) (:vars g-obj) {})
+                    merged-g-vars (merge all-vars g-vars)
+                    hosts (if (:hosts g-obj) (:hosts g-obj) (if (get g-obj "hosts") (get g-obj "hosts") {}))
+                    host-keys (keys hosts)]
+                (let [new-hosts (loop [h-rem host-keys
+                                       h-acc hosts]
+                                  (if (empty? h-rem)
+                                    h-acc
+                                    (let [h (first h-rem)
+                                          h-str (if (keyword? h) (subs (str h) 1) h)
+                                          h-obj (get h-acc h)
+                                          h-file-1 (str inv-dir "/host/vars/" h-str ".edn")
+                                          h-file-2 (str inv-dir "/vars/" h-str ".edn")
+                                          h-ext-1 (if (io/exists? h-file-1) (read-string (io/read-file h-file-1)) {})
+                                          h-ext-2 (if (io/exists? h-file-2) (read-string (io/read-file h-file-2)) {})
+                                          merged-h (merge merged-g-vars h-obj h-ext-1 h-ext-2)]
+                                      (recur (rest h-rem) (assoc h-acc h merged-h)))))]
+                  (recur (rest fg-rem) (assoc fg-acc g (assoc g-obj :hosts new-hosts))))))))
+        (let [g (first g-rem)
+              g-str (if (keyword? g) (subs (str g) 1) g)
+              g-file-1 (str inv-dir "/group/vars/" g-str ".edn")
+              g-file-2 (str inv-dir "/vars/" g-str ".edn")
+              g-obj (get g-acc g)
+              g-vars (if (:vars g-obj) (:vars g-obj) {})
+              ext-1 (if (io/exists? g-file-1) (read-string (io/read-file g-file-1)) {})
+              ext-2 (if (io/exists? g-file-2) (read-string (io/read-file g-file-2)) {})
+              new-vars (merge g-vars ext-1 ext-2)
+              new-g-obj (assoc g-obj :vars new-vars)]
+          (recur (rest g-rem) (assoc g-acc g new-g-obj)))))))
+
 (defn parse-inventory [path]
-  (if (io/exists? path)
+  (let [data
+    (if (io/exists? path)
     (let [is-exec (= (str/trim (:stdout (shell/sh (str "[ -x " path " ] && echo true || echo false")))) "true")]
       (if is-exec
         (let [exec-res (shell/sh (if (str/starts-with? path "/") path (str "./" path)))]
@@ -943,7 +988,8 @@
                              (recur (rest rem) acc)
                              (recur (rest rem) (assoc acc h {}))))))]
         {"all" {:hosts host-map}})
-      {"all" {:hosts {path {}}}})))
+      {"all" {:hosts {path {}}}}))]
+    (load-external-vars data path)))
 
 (defn get-hosts [inventory target-group]
   (if (= target-group "localhost")
@@ -1677,11 +1723,11 @@
   (let [dir (if (= project-dir ".") "." project-dir)]
     (io/make-dir dir)
     (io/make-dir (str dir "/roles"))
-    (io/make-dir (str dir "/group_vars"))
+    (io/make-dir (str dir "/group/vars"))
     (io/make-dir (str dir "/tasks"))
     (io/write-file (str dir "/inventory.edn")
       "{:all {:hosts {:localhost {}}}}\n")
-    (io/write-file (str dir "/group_vars/all.edn")
+    (io/write-file (str dir "/group/vars/all.edn")
       "{:app_name \"myapp\"\n :deploy_dir \"/opt/myapp\"}\n")
     (io/write-file (str dir "/main.edn")
       "{:name \"My Playbook\"\n :hosts \"all\"\n :vars {:greeting \"Hello from NPKM!\"}\n :tasks\n [{:name \"Say hello\"\n   :debug {:msg \"{{ greeting }}\"}}\n  {:name \"Ensure deploy dir exists\"\n   :file {:path \"{{ deploy_dir }}\" :state \"directory\"}}]}\n")
@@ -1690,7 +1736,7 @@
     (println (str "\033[32m✓ NPKM project initialized at: " dir "\033[0m"))
     (println "  \033[36mmain.edn\033[0m          - Main playbook")
     (println "  \033[36minventory.edn\033[0m     - Host inventory")
-    (println "  \033[36mgroup_vars/all.edn\033[0m - Shared variables")
+    (println "  \033[36mgroup/vars/all.edn\033[0m - Shared variables")
     (println "  \033[36mtasks/setup.edn\033[0m   - Example task file")
     (println "  \033[36mroles/\033[0m            - Role directory")
     (println "\nRun with: npkm -i inventory.edn main.edn")))
