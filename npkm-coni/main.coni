@@ -746,7 +746,7 @@
                       [parsed]
                       parsed)
                     parsed)))
-          norm-res (normalize-tasks res)
+          norm-res (if (map? res) [res] (if (vector? res) res []))
           is-play-list (if (> (count norm-res) 0)
                          (let [f (first norm-res)]
                            (or (:tasks f) (:hosts f) (:roles f) (and is-yaml (> (count roles-manual-map) 0))))
