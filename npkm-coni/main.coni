@@ -732,7 +732,9 @@
                       [parsed]
                       parsed)
                     parsed)))
+          _ (println "RES:" res)
           norm-res (if (map? res) [res] (if (vector? res) res []))
+          _ (println "NORM-RES:" norm-res)
           is-play-list (if (> (count norm-res) 0)
                          (let [f (first norm-res)]
                            (or (:tasks f) (:hosts f) (:roles f) (and is-yaml (> (count roles-manual-map) 0))))
@@ -1004,12 +1006,18 @@
           (if hosts-map
             (keys hosts-map)
             (if (map? group) (keys group) group)))
-        (let [all-group (if (get inventory "all") (get inventory "all") (get inventory :all))]
-          (if all-group
-            (let [all-hosts-map (if (:hosts all-group) (:hosts all-group) (get all-group "hosts"))]
-              (if (and all-hosts-map (or (get all-hosts-map target-group) (get all-hosts-map (keyword target-group))))
-                [target-group]
-                []))
+        (let [all-groups (keys inventory)
+              found-host (loop [rem all-groups]
+                           (if (empty? rem)
+                             false
+                             (let [g (first rem)
+                                   g-obj (get inventory g)
+                                   h-map (if (:hosts g-obj) (:hosts g-obj) (if (get g-obj "hosts") (get g-obj "hosts") {}))]
+                               (if (and h-map (or (get h-map target-group) (get h-map (keyword target-group))))
+                                 true
+                                 (recur (rest rem))))))]
+          (if found-host
+            [target-group]
             []))))))
 
 (defn get-host-vars [inventory host-name]
@@ -2129,6 +2137,7 @@
                 (if is-bw (println "Error: Playbook file not found:" playbook-file) (println "\033[31mError: Playbook file not found:" playbook-file "\033[0m"))
                 (sys-exit 1))
                   (let [content (io/read-file playbook-file)
+                        _ (println "Reading playbook:" playbook-file)
                         parsed-data (parse-playbook playbook-file content)
                         tasks (:tasks parsed-data)
                         cfg (:cfg parsed-data)]

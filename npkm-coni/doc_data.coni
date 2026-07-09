@@ -542,6 +542,24 @@ Format, join, and manipulate variables directly inside templates!
     msg: \"Joined list: {{ my_list | join(',') }} or Default var: {{ my_var | default('fallback') }}\"
 \\`\\`\\`
 
+### Variables & Auto-loading (v2.2)
+NPKM natively supports hierarchical variable auto-loading, identical to standard Ansible practices. You no longer need to explicitly use \\`vars_files\\` for standard layouts.
+
+**Global Variables:**
+Variables defined in a \\`vars/main.yml\\` (or \\`.edn\\`) file adjacent to your playbook are automatically loaded into the playbook context.
+
+**Inventory Variables:**
+When you provide an inventory file, NPKM automatically scans the adjacent \\`group_vars/\\` and \\`host_vars/\\` directories to dynamically load variables based on the host's group memberships and hostname.
+
+\\`\\`\\`yaml
+# inventories/dev/group_vars/all.yml
+ansible_user: deploy
+java_install_dir: \"/usr/lib/java\"
+
+# inventories/dev/host_vars/bootstrap.yml
+java_install_dir: \"/opt/custom_java\" # Overrides the group variable
+\\`\\`\\`
+
 ---
 
 ## Remote SSH Orchestration (Inventories)
