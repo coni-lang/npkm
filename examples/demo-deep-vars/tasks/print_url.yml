@@ -1,0 +1,3 @@
+- name: Print the passed URL
+  debug:
+    msg: "Downloading from {{ url }} to {{ dest_dir }}/{{ dest_file }}"

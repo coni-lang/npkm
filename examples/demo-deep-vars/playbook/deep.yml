@@ -21,3 +21,10 @@
     - name: Show the derived mid-playbook variable
       debug:
         msg: "The API endpoint evaluates to: {{ custom_url }}"
+
+    - name: Test include_tasks var interpolation (Bugfix)
+      include_tasks: tasks/print_url.yml
+      vars:
+        url: "{{ custom_url }}"
+        dest_dir: "/tmp"
+        dest_file: "config.json"

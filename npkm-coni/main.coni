@@ -1356,7 +1356,8 @@
                 (let [included-data (load-included-tasks interp-src)
                       included-tasks (:tasks included-data)
                       defaults-vars (:defaults included-data)
-                      task-vars (if (:vars raw-task) (:vars raw-task) {})
+                      task-vars-raw (if (:vars raw-task) (:vars raw-task) {})
+                      task-vars (custom-interp task-vars-raw runtime-vars)
                       merged-vars (merge runtime-vars defaults-vars task-vars)]
                   (loop [rem included-tasks curr-vars merged-vars]
                     (if (empty? rem) curr-vars

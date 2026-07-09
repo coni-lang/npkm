@@ -50,7 +50,9 @@
 (deftest test-deep-vars-playbook
   "Tests the deep variable resolution across group and host vars"
   (let [bin-path (if (io/exists? "/tmp/coni-compiler") "/tmp/coni-compiler" "coni")
-        res (shell/sh (str "env CONI_LIB=/Users/nico/cool/coni-lang/libs " bin-path " main.coni -i ../examples/demo-deep-vars/inventories/dev/inventory.yml ../examples/demo-deep-vars/playbook/deep.yml"))]
+        _ (shell/sh "cp doc_data.coni ../examples/demo-deep-vars/")
+        res (shell/sh (str "cd ../examples/demo-deep-vars && env CONI_LIB=/Users/nico/cool/coni-lang/libs " bin-path " ../../npkm-coni/main.coni -i inventories/dev/inventory.yml playbook/deep.yml"))
+        _ (shell/sh "rm ../examples/demo-deep-vars/doc_data.coni")]
     (is (= 0 (:code res)))
     (is (= false (str/includes? (:stdout res) "Error")))
     (is (= true (str/includes? (:stdout res) "Database is 192.168.1.100:5432 and URL is http://10.0.0.1:9090 and Web is 9090")))))
