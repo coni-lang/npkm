@@ -1,6 +1,23 @@
-- name: Test deep vars
-  hosts: server1
+- name: Test exhaustive deep vars
+  hosts: all
   tasks:
-    - name: Show deep var
+    - name: Show deep var concatenation
       debug:
         msg: "Database is {{ app_db.host }}:{{ app_db.port }} and URL is {{ app_config.url }} and Web is {{ app_web.port }}"
+
+    - name: Use string filters and default fallbacks
+      debug:
+        msg: "Beta UI is {{ app_feature_flags.beta_ui }} and missing flag is {{ app_feature_flags.missing | default('fallback-value') }}"
+
+    - name: Iterate over array variables
+      debug:
+        msg: "Configured allowed user: {{ item }}"
+      loop: allowed_users
+
+    - name: Set a mid-playbook custom fact
+      set_fact:
+        custom_url: "{{ app_config.url }}/api/v1"
+
+    - name: Show the derived mid-playbook variable
+      debug:
+        msg: "The API endpoint evaluates to: {{ custom_url }}"

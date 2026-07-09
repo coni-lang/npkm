@@ -6,3 +6,10 @@ app_web:
   host: 0.0.0.0
 app_config:
   url: "http://{{ app_web.host }}:{{ app_web.port }}"
+app_feature_flags:
+  beta_ui: false
+  enable_metrics: true
+allowed_users:
+  - admin
+  - webmaster
+  - deploy

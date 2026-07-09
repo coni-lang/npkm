@@ -3,3 +3,4 @@ all:
     servers:
       hosts:
         server1:
+        server2:
