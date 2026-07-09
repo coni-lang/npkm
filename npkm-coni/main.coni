@@ -10,6 +10,21 @@
 (require "libs/vault/src/vault.coni" :as vault)
 (require "doc_data.coni" :as doc)
 
+
+
+(defn resolve-var-path [vars path]
+  (let [parts (str/split path ".")]
+    (loop [rem parts curr vars]
+      (if (empty? rem)
+        curr
+        (if (map? curr)
+          (let [k-str (first rem)
+                k-kw (keyword k-str)
+                val-str (get curr k-str)
+                val-kw (get curr k-kw)]
+            (recur (rest rem) (if val-str val-str val-kw)))
+          nil)))))
+
 (defn apply-filters-to-string [s vars]
   (let [parts (str/split s "{{")]
     (if (= (count parts) 1)
@@ -27,8 +42,7 @@
                     expr-parts (str/split expr "|")
                     var-name (str/trim (first expr-parts))
                     filters (rest expr-parts)
-                    base-val-raw (get vars (keyword var-name))
-                    base-val (if base-val-raw base-val-raw (get vars var-name))
+                    base-val (resolve-var-path vars var-name)
                     final-val (if (and (nil? base-val) (= var-name "item"))
                                 "{{ item }}"
                                 (loop [f-rem filters
@@ -713,7 +727,7 @@
         auto-vars-path (if (str/includes? file "/") (str (subs file 0 (str/last-index-of file "/")) "/../vars/main.yml") "vars/main.yml")
         auto-vars-content (if (io/exists? auto-vars-path) (io/read-file auto-vars-path) "")
         auto-vars-cfg (if (> (count auto-vars-content) 0) 
-                        (yaml/extract-config (str "config:\n  " (str/replace auto-vars-content "\n" "\n  "))) 
+                        (parse-vars-yaml auto-vars-content)
                         {})
         ext-content (if (io/exists? "config.yml") (io/read-file "config.yml") "")
         ext-cfg (merge (if (> (count ext-content) 0) (yaml/extract-config ext-content) {}) auto-vars-cfg)
@@ -732,9 +746,7 @@
                       [parsed]
                       parsed)
                     parsed)))
-          _ (println "RES:" res)
-          norm-res (if (map? res) [res] (if (vector? res) res []))
-          _ (println "NORM-RES:" norm-res)
+          norm-res (normalize-tasks res)
           is-play-list (if (> (count norm-res) 0)
                          (let [f (first norm-res)]
                            (or (:tasks f) (:hosts f) (:roles f) (and is-yaml (> (count roles-manual-map) 0))))
@@ -902,21 +914,59 @@
                         (recur (rest rem) acc new-path))))
                   (recur (rest rem) acc new-path))))))))))
 
+(defn assoc-in-path [m ks v]
+  (if (empty? ks)
+    v
+    (let [k (first ks)
+          cur (if (map? m) m {})
+          next-m (get cur k)]
+      (assoc cur k (assoc-in-path next-m (rest ks) v)))))
+
+(defn parse-vars-yaml [content]
+  (let [lines (str/split content "\n")]
+    (loop [rem lines
+           acc {}
+           path []]
+      (if (empty? rem)
+        acc
+        (let [line (first rem)
+              trim-line (str/trim line)
+              is-comment (str/starts-with? trim-line "#")
+              is-empty (= trim-line "")]
+          (if (or is-comment is-empty)
+            (recur (rest rem) acc path)
+            (let [indent (- (count line) (count trim-line))
+                  new-path (loop [p path]
+                             (if (empty? p) []
+                               (if (< (:indent (last p)) indent) p
+                                 (recur (drop-last p)))))
+                  is-node (and (str/ends-with? trim-line ":") (not (str/includes? trim-line " ")))]
+              (if is-node
+                (let [name (subs trim-line 0 (- (count trim-line) 1))
+                      node {:name name :indent indent}
+                      final-path (conj new-path node)
+                      keys (loop [r final-path k []] (if (empty? r) k (recur (rest r) (conj k (keyword (:name (first r)))))))
+                      cur-val (loop [r keys curr acc] (if (empty? r) curr (if (map? curr) (recur (rest r) (get curr (first r))) nil)))
+                      new-acc (if (nil? cur-val) (assoc-in-path acc keys {}) acc)]
+                  (recur (rest rem) new-acc final-path))
+                (if (str/includes? trim-line ":")
+                  (let [colon-idx (str/index-of trim-line ":")
+                        k-str (str/trim (subs trim-line 0 colon-idx))
+                        v-str (str/trim (subs trim-line (+ colon-idx 1) (count trim-line)))
+                        v-val (str/strip-quotes v-str)
+                        keys (loop [r new-path k []] (if (empty? r) k (recur (rest r) (conj k (keyword (:name (first r)))))))
+                        final-keys (conj keys (keyword k-str))
+                        new-acc (assoc-in-path acc final-keys v-val)]
+                    (recur (rest rem) new-acc new-path))
+                  (recur (rest rem) acc new-path))))))))))
+
 (defn load-var-file [base-path]
   (let [edn-path (str base-path ".edn")
         yml-path (str base-path ".yml")
         yaml-path (str base-path ".yaml")
         parse-yml (fn [path]
-                    (let [raw (io/read-file path)
-                          wrapped (str "config:\n  " (str/replace raw "\n" "\n  "))
-                          cfg (yaml/extract-config wrapped)]
-                      (if (map? cfg)
-                        (loop [k-list (keys cfg) acc {}]
-                          (if (empty? k-list) acc
-                            (let [k (first k-list)
-                                  k-str (if (str/starts-with? (str k) ":") (str/substring (str k) 1 (count (str k))) (str k))]
-                              (recur (rest k-list) (assoc acc (keyword k-str) (get cfg k))))))
-                        {})))]
+                    (let [raw (io/read-file path)]
+                      (parse-vars-yaml raw)))]
     (if (io/exists? edn-path)
       (read-string (io/read-file edn-path))
       (if (io/exists? yml-path)
@@ -1145,18 +1195,7 @@
               (nil? actual))
             true)))))
 
-(defn resolve-var-path [vars path]
-  (let [parts (str/split path ".")]
-    (loop [rem parts curr vars]
-      (if (empty? rem)
-        curr
-        (if (map? curr)
-          (let [k-str (first rem)
-                k-kw (keyword k-str)
-                val-str (get curr k-str)
-                val-kw (get curr k-kw)]
-            (recur (rest rem) (if val-str val-str val-kw)))
-          nil)))))
+
 
 (defn get-os-family []
   (let [os (sys-os-name)]
