@@ -710,8 +710,13 @@
                     (let [parsed (read-string content)
                           cfg (:config parsed)]
                       (if cfg cfg {})))
+        auto-vars-path (if (str/includes? file "/") (str (subs file 0 (str/last-index-of file "/")) "/../vars/main.yml") "vars/main.yml")
+        auto-vars-content (if (io/exists? auto-vars-path) (io/read-file auto-vars-path) "")
+        auto-vars-cfg (if (> (count auto-vars-content) 0) 
+                        (yaml/extract-config (str "config:\n  " (str/replace auto-vars-content "\n" "\n  "))) 
+                        {})
         ext-content (if (io/exists? "config.yml") (io/read-file "config.yml") "")
-        ext-cfg (if (> (count ext-content) 0) (yaml/extract-config ext-content) {})
+        ext-cfg (merge (if (> (count ext-content) 0) (yaml/extract-config ext-content) {}) auto-vars-cfg)
         cfg (loop [k-list (keys local-cfg) acc ext-cfg]
               (if (empty? k-list) acc
                 (let [k (first k-list)
@@ -895,6 +900,29 @@
                         (recur (rest rem) acc new-path))))
                   (recur (rest rem) acc new-path))))))))))
 
+(defn load-var-file [base-path]
+  (let [edn-path (str base-path ".edn")
+        yml-path (str base-path ".yml")
+        yaml-path (str base-path ".yaml")
+        parse-yml (fn [path]
+                    (let [raw (io/read-file path)
+                          wrapped (str "config:\n  " (str/replace raw "\n" "\n  "))
+                          cfg (yaml/extract-config wrapped)]
+                      (if (map? cfg)
+                        (loop [k-list (keys cfg) acc {}]
+                          (if (empty? k-list) acc
+                            (let [k (first k-list)
+                                  k-str (if (str/starts-with? (str k) ":") (str/substring (str k) 1 (count (str k))) (str k))]
+                              (recur (rest k-list) (assoc acc (keyword k-str) (get cfg k))))))
+                        {})))]
+    (if (io/exists? edn-path)
+      (read-string (io/read-file edn-path))
+      (if (io/exists? yml-path)
+        (parse-yml yml-path)
+        (if (io/exists? yaml-path)
+          (parse-yml yaml-path)
+          {})))))
+
 (defn load-external-vars [inventory inv-file]
   (let [inv-dir (if (str/includes? inv-file "/") (subs inv-file 0 (str/last-index-of inv-file "/")) ".")
         groups (keys inventory)]
@@ -920,22 +948,20 @@
                                     (let [h (first h-rem)
                                           h-str (if (keyword? h) (subs (str h) 1) h)
                                           h-obj (get h-acc h)
-                                          h-file-1 (str inv-dir "/host/vars/" h-str ".edn")
-                                          h-file-2 (str inv-dir "/vars/" h-str ".edn")
-                                          h-ext-1 (if (io/exists? h-file-1) (read-string (io/read-file h-file-1)) {})
-                                          h-ext-2 (if (io/exists? h-file-2) (read-string (io/read-file h-file-2)) {})
-                                          merged-h (merge merged-g-vars h-obj h-ext-1 h-ext-2)]
+                                          h-ext-1 (load-var-file (str inv-dir "/host_vars/" h-str))
+                                          h-ext-2 (load-var-file (str inv-dir "/host/vars/" h-str))
+                                          h-ext-3 (load-var-file (str inv-dir "/vars/" h-str))
+                                          merged-h (merge merged-g-vars h-obj h-ext-1 h-ext-2 h-ext-3)]
                                       (recur (rest h-rem) (assoc h-acc h merged-h)))))]
                   (recur (rest fg-rem) (assoc fg-acc g (assoc g-obj :hosts new-hosts))))))))
         (let [g (first g-rem)
               g-str (if (keyword? g) (subs (str g) 1) g)
-              g-file-1 (str inv-dir "/group/vars/" g-str ".edn")
-              g-file-2 (str inv-dir "/vars/" g-str ".edn")
+              g-ext-1 (load-var-file (str inv-dir "/group_vars/" g-str))
+              g-ext-2 (load-var-file (str inv-dir "/group/vars/" g-str))
+              g-ext-3 (load-var-file (str inv-dir "/vars/" g-str))
               g-obj (get g-acc g)
               g-vars (if (:vars g-obj) (:vars g-obj) {})
-              ext-1 (if (io/exists? g-file-1) (read-string (io/read-file g-file-1)) {})
-              ext-2 (if (io/exists? g-file-2) (read-string (io/read-file g-file-2)) {})
-              new-vars (merge g-vars ext-1 ext-2)
+              new-vars (merge g-vars g-ext-1 g-ext-2 g-ext-3)
               new-g-obj (assoc g-obj :vars new-vars)]
           (recur (rest g-rem) (assoc g-acc g new-g-obj)))))))
 
