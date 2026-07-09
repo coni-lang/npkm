@@ -1,0 +1,6 @@
+- name: Test deep vars
+  hosts: server1
+  tasks:
+    - name: Show deep var
+      debug:
+        msg: "Database is {{ app_db.host }}:{{ app_db.port }} and URL is {{ app_config.url }} and Web is {{ app_web.port }}"

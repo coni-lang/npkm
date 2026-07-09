@@ -1,0 +1,4 @@
+(require "io")
+(require "yaml")
+(def raw (io/read-file "vars/main.yml"))
+(println (yaml/yaml-to-edn raw))

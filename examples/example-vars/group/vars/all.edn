@@ -1,3 +1,0 @@
-{:app_name "npkm-awesome-app"
- :deploy_user "deploy"
- :global_env "production"}

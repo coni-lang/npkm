@@ -72,6 +72,20 @@ npkm watch -i inventory.yml playbook.yml
 
 ---
 
+## Variables
+
+NPKM provides a robust and hierarchical variable resolution system, matching Ansible's scoping rules.
+
+1. **Global Variables**: Define variables across all hosts by placing a `vars/main.yml` file in the root directory alongside your playbook.
+2. **Group Variables**: Define variables specific to an inventory group inside `group_vars/<group_name>.yml` (relative to your inventory file).
+3. **Host Variables**: Define variables for a specific host inside `host_vars/<hostname>.yml` (relative to your inventory file).
+
+Variables are evaluated dynamically at runtime, enabling deep references and templating (e.g., `url: "http://{{ app_web.host }}:{{ app_web.port }}"`). 
+
+Check out the [demo-deep-vars](examples/demo-deep-vars/) example in the repository for a complete showcase.
+
+---
+
 ## Examples (v2.0 Features)
 
 Here is a quick playbook showcasing the latest module improvements, output capturing (`register`), nested variable interpolation, and dry-run safety:

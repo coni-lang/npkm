@@ -1,0 +1,3 @@
+(def raw "config:\n  app:\n    db:\n      port: 5432\n")
+(def res (yaml/extract-config raw))
+(println res)

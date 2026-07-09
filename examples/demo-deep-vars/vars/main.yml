@@ -1,0 +1,8 @@
+app_db:
+  port: 5432
+  host: localhost
+app_web:
+  port: 8080
+  host: 0.0.0.0
+app_config:
+  url: "http://{{ app_web.host }}:{{ app_web.port }}"

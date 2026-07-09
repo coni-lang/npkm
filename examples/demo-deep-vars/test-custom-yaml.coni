@@ -1,0 +1,48 @@
+(defn assoc-in-path [m ks v]
+  (if (empty? ks)
+    v
+    (let [k (first ks)
+          cur (if (map? m) m {})
+          next-m (get cur k)]
+      (assoc cur k (assoc-in-path next-m (rest ks) v)))))
+
+(defn parse-vars-yaml [content]
+  (let [lines (str/split content "\n")]
+    (loop [rem lines
+           acc {}
+           path []]
+      (if (empty? rem)
+        acc
+        (let [line (first rem)
+              trim-line (str/trim line)
+              is-comment (str/starts-with? trim-line "#")
+              is-empty (= trim-line "")]
+          (if (or is-comment is-empty)
+            (recur (rest rem) acc path)
+            (let [indent (- (count line) (count trim-line))
+                  new-path (loop [p path]
+                             (if (empty? p) []
+                               (if (< (:indent (last p)) indent) p
+                                 (recur (drop-last p)))))
+                  is-node (and (str/ends-with? trim-line ":") (not (str/includes? trim-line " ")))]
+              (if is-node
+                (let [name (subs trim-line 0 (- (count trim-line) 1))
+                      node {:name name :indent indent}
+                      final-path (conj new-path node)
+                      keys (loop [r final-path k []] (if (empty? r) k (recur (rest r) (conj k (keyword (:name (first r)))))))
+                      cur-val (loop [r keys curr acc] (if (empty? r) curr (if (map? curr) (recur (rest r) (get curr (first r))) nil)))
+                      new-acc (if (nil? cur-val) (assoc-in-path acc keys {}) acc)]
+                  (recur (rest rem) new-acc final-path))
+                (if (str/includes? trim-line ":")
+                  (let [colon-idx (str/index-of trim-line ":")
+                        k-str (str/trim (subs trim-line 0 colon-idx))
+                        v-str (str/trim (subs trim-line (+ colon-idx 1) (count trim-line)))
+                        v-val (str/strip-quotes v-str)
+                        keys (loop [r new-path k []] (if (empty? r) k (recur (rest r) (conj k (keyword (:name (first r)))))))
+                        final-keys (conj keys (keyword k-str))
+                        new-acc (assoc-in-path acc final-keys v-val)]
+                    (recur (rest rem) new-acc new-path))
+                  (recur (rest rem) acc new-path))))))))))
+
+(def raw "app_db:\n  port: 5432\n  config:\n    url: test\napp_web:\n  port: 8080\n")
+(println (parse-vars-yaml raw))

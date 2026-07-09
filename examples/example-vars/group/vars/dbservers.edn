@@ -1,2 +1,0 @@
-{:db_port 5432
- :service_type "backend"}

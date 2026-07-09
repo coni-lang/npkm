@@ -1,0 +1,3 @@
+(def a {:app {:db {:port 1}}})
+(def b {:app {:web {:port 2}}})
+(println (merge a b))

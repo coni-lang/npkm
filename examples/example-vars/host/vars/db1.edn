@@ -1,2 +1,0 @@
-{:db_port 5433
- :custom_message "Hello from db1 (Custom DB Port)!"}
