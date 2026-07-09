@@ -958,7 +958,16 @@
                         final-keys (conj keys (keyword k-str))
                         new-acc (assoc-in-path acc final-keys v-val)]
                     (recur (rest rem) new-acc new-path))
-                  (recur (rest rem) acc new-path))))))))))
+                  (if (str/starts-with? trim-line "- ")
+                    (let [v-str (str/trim (subs trim-line 2 (count trim-line)))
+                          v-val (str/strip-quotes v-str)
+                          keys (loop [r new-path k []] (if (empty? r) k (recur (rest r) (conj k (keyword (:name (first r)))))))
+                          cur-list (loop [r keys curr acc] (if (empty? r) curr (if (map? curr) (recur (rest r) (get curr (first r))) nil)))
+                          cur-list-real (if (vector? cur-list) cur-list [])
+                          new-list (conj cur-list-real v-val)
+                          new-acc (assoc-in-path acc keys new-list)]
+                      (recur (rest rem) new-acc new-path))
+                    (recur (rest rem) acc new-path)))))))))))
 
 (defn load-var-file [base-path]
   (let [edn-path (str base-path ".edn")
