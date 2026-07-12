@@ -1809,6 +1809,158 @@
     (println "  \033[36mroles/\033[0m            - Role directory")
     (println "\nRun with: npkm -i inventory.edn main.edn")))
 
+(defn audit-tasks [tasks playbook-file depth acc]
+  (loop [rem tasks a acc]
+    (if (empty? rem)
+      a
+      (let [t (first rem)
+            block-tasks (if (:block t) (:block t) (get t "block"))
+            rescue-tasks (if (:rescue t) (:rescue t) (get t "rescue"))
+            always-tasks (if (:always t) (:always t) (get t "always"))
+            include-src (if (:include_tasks t) (:include_tasks t) (get t "include_tasks"))
+            match (get-task-match t)
+            mod-k (if match (first match) nil)
+            mod-v (if match (second match) nil)
+            task-name (or (:name t) (str mod-k))
+            
+            is-dang (or (= mod-k :shell) (= mod-k :command) (= mod-k :raw) (= mod-k :script) (= mod-k :powershell))
+            is-priv (or (:become t) (:sudo t) (= (get t "become") true) (= (get t "become") "yes"))
+            is-http (and (= mod-k :get_url) (str/starts-with? (str (or (:url mod-v) "")) "http://"))
+            
+            repo-used (if (= mod-k :git) (or (:repo mod-v) "") nil)
+            repo-apt (if (= mod-k :apt_repository) (or (:repo mod-v) "") nil)
+            repo-yum (if (= mod-k :yum_repository) (or (:baseurl mod-v) "") nil)
+            
+            a1 (if is-dang (assoc a :dangerous (conj (get a :dangerous []) {:name task-name :module mod-k :cmd (or (:cmd mod-v) "")})) a)
+            a2 (if is-priv (assoc a1 :privilege (conj (get a1 :privilege []) {:name task-name :module mod-k})) a1)
+            a3 (if is-http (assoc a2 :insecure-fetch (conj (get a2 :insecure-fetch []) {:name task-name :url (:url mod-v)})) a2)
+            
+            a4-a (if repo-used (assoc a3 :repos (conj (get a3 :repos []) {:type "git" :url repo-used})) a3)
+            a4-b (if repo-apt (assoc a4-a :repos (conj (get a4-a :repos []) {:type "apt" :url repo-apt})) a4-a)
+            a4 (if repo-yum (assoc a4-b :repos (conj (get a4-b :repos []) {:type "yum" :url repo-yum})) a4-b)
+            
+            ;; Mermaid tasks diagram linkage
+            safe-t-label (str/replace task-name "\"" "'")
+            t-node (str "Task_" (count (:mermaid a4)))
+            m-t-link (str "    " (get a4 :current-play-node "Play") " --> " t-node "[\"" safe-t-label "\"]\n")
+            a5 (assoc a4 :mermaid (str (:mermaid a4) m-t-link))
+            
+            ;; Recursion
+            a-b (if block-tasks (audit-tasks block-tasks playbook-file (+ depth 1) (assoc a5 :current-play-node t-node)) a5)
+            a-r (if rescue-tasks (audit-tasks rescue-tasks playbook-file (+ depth 1) (assoc a-b :current-play-node t-node)) a-b)
+            a-f (if always-tasks (audit-tasks always-tasks playbook-file (+ depth 1) (assoc a-r :current-play-node t-node)) a-r)
+            a-i (if include-src 
+                  (let [inc-parsed (if (io/exists? include-src) (parse-playbook include-src (io/read-file include-src)) {})
+                        inc-tasks (or (:tasks inc-parsed) inc-parsed)
+                        a-i-base (assoc a-f :repos (conj (get a-f :repos []) {:type "include" :url include-src}))
+                        i-node (str "Include_" (count (:mermaid a-i-base)))
+                        m-i-link (str "    " t-node " -.-> " i-node "[\"include: " include-src "\"]\n")
+                        a-i-m (assoc a-i-base :mermaid (str (:mermaid a-i-base) m-i-link))]
+                    (if (or (vector? inc-tasks) (seq? inc-tasks))
+                      (audit-tasks inc-tasks include-src (+ depth 1) (assoc a-i-m :current-play-node i-node))
+                      a-i-m))
+                  a-f)]
+        (recur (rest rem) a-i)))))
+
+(defn npkm-audit-security [playbook-file]
+  (if (not (io/exists? playbook-file))
+    (do (println (str "\033[31mError: " playbook-file " not found\033[0m")) (sys-exit 1)))
+  (println (str "\033[34m⬡ Auditing: " playbook-file "\033[0m"))
+  (let [content (io/read-file playbook-file)
+        parsed-data (parse-playbook playbook-file content)
+        tasks (:tasks parsed-data)
+        plays (if (and (vector? tasks) (map? (first tasks)) (:tasks (first tasks)))
+                tasks
+                [{:name "Default Play" :hosts (or (:hosts parsed-data) "all") :tasks (if (map? tasks) (:tasks tasks) tasks)}])
+        
+        audit-res (loop [rem-plays plays acc {:dangerous [] :privilege [] :insecure-fetch [] :repos [] :mermaid ""}]
+                    (if (empty? rem-plays) acc
+                      (let [play (first rem-plays)
+                            p-name (or (:name play) "Play")
+                            p-hosts (or (:hosts play) "all")
+                            play-tasks (if (:tasks play) (:tasks play) [])
+                            safe-p-label (str/replace p-name "\"" "'")
+                            safe-h-label (str/replace p-hosts "\"" "'")
+                            m-node (str "Play_" (count (:mermaid acc)))
+                            m-host (str "Hosts_" (count (:mermaid acc)))
+                            m-link (str "    " m-node "[\"" safe-p-label "\"] ===> " m-host "([\"Target: " safe-h-label "\"])\n")
+                            a1 (assoc acc :mermaid (str (:mermaid acc) m-link) :current-play-node m-node)
+                            a2 (audit-tasks play-tasks playbook-file 0 a1)]
+                        (recur (rest rem-plays) a2))))
+        
+        ;; Add roles to repos
+        audit-res2 (let [roles (or (:roles parsed-data) [])
+                         r-repos (loop [rs roles acc []]
+                                   (if (empty? rs) acc
+                                     (recur (rest rs) (conj acc {:type "role" :url (first rs)}))))]
+                     (assoc audit-res :repos (concat (:repos audit-res) r-repos)))
+                     
+        report-dir (str (os/get-home-dir) "/.npkm/reports")
+        date-str (os/get-date)
+        html-path (str report-dir "/audit-" date-str ".html")]
+    (io/make-dir report-dir)
+    (let [escape-html (fn [s] (str/replace (str/replace (str/replace s "&" "&amp;") "<" "&lt;") ">" "&gt;"))
+          html (str "<!DOCTYPE html><html><head><title>NPKM Security Audit</title>
+<script type=\"module\">import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs'; mermaid.initialize({ startOnLoad: true, theme: 'dark' });</script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;800&display=swap');
+body { font-family: 'Outfit', sans-serif; padding: 40px; background: radial-gradient(circle at top left, #1e1b4b, #09090b 40%); background-attachment: fixed; color: #f8fafc; margin: 0; min-height: 100vh; }
+.nav { display: flex; gap: 1.5rem; margin-bottom: 2rem; padding: 1rem 2rem; background: rgba(24, 24, 27, 0.6); backdrop-filter: blur(12px); border-radius: 16px; border: 1px solid rgba(255, 255, 255, 0.1); box-shadow: 0 8px 32px rgba(0,0,0,0.3); }
+.nav a { color: #94a3b8; text-decoration: none; font-weight: 600; font-size: 1.1rem; transition: all 0.3s ease; padding: 0.5rem 1rem; border-radius: 8px; cursor: pointer; }
+.nav a:hover, .nav a.active { color: #f8fafc; background: rgba(255,255,255,0.05); transform: translateY(-2px); }
+h1 { color: transparent; background: linear-gradient(to right, #38bdf8, #818cf8); -webkit-background-clip: text; font-weight: 800; margin-bottom: 5px; font-size: 2.5rem; }
+.meta { color: #94a3b8; margin-bottom: 20px; font-size: 0.95rem; }
+.container { max-width: 1400px; margin: 0 auto; display: flex; flex-direction: column; min-height: calc(100vh - 80px); }
+.card { background: rgba(30, 41, 59, 0.7); backdrop-filter: blur(10px); padding: 25px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.1); box-shadow: 0 8px 32px rgba(0,0,0,0.2); margin-bottom: 15px; }
+.dang { border-left: 4px solid #ef4444; }
+.priv { border-left: 4px solid #a855f7; }
+.repo { border-left: 4px solid #3b82f6; }
+pre { background: rgba(0,0,0,0.3); padding: 1rem; border-radius: 8px; overflow-x: auto; color: #e2e8f0; font-family: monospace; }
+.tab-content { display: none; }
+.tab-content.active { display: block; animation: fadeIn 0.4s ease; }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+</style>
+<script>
+function showTab(tabId) {
+  document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('.nav a').forEach(el => el.classList.remove('active'));
+  document.getElementById(tabId).classList.add('active');
+  document.querySelector(`[onclick=\"showTab('${tabId}')\"]`).classList.add('active');
+}
+</script>
+</head><body><div class=\"container\">"
+                    "<h1>⬡ NPKM Security Audit Report</h1>"
+                    "<div class=\"meta\"><b>Playbook:</b> " playbook-file " &nbsp;|&nbsp; <b>Generated at:</b> " date-str "</div>"
+                    "<div class=\"nav\">"
+                    "<a class=\"active\" onclick=\"showTab('tab-arch')\">Architecture Map</a>"
+                    "<a onclick=\"showTab('tab-dang')\">Dangerous Tasks</a>"
+                    "<a onclick=\"showTab('tab-priv')\">Privilege Escalation</a>"
+                    "<a onclick=\"showTab('tab-http')\">Insecure Fetches</a>"
+                    "<a onclick=\"showTab('tab-repo')\">Used Repositories</a>"
+                    "</div>"
+                    "<div id=\"tab-arch\" class=\"tab-content active\">"
+                    "<div class=\"card\"><div class=\"mermaid\">\ngraph TD\n" (:mermaid audit-res2) "</div></div>"
+                    "</div>"
+                    "<div id=\"tab-dang\" class=\"tab-content\">"
+                    (if (empty? (:dangerous audit-res2)) "<div class=\"card\"><p>No dangerous tasks found.</p></div>"
+                      (str/join "" (map (fn [t] (str "<div class='card dang'><b>" (:name t) "</b> [" (name (:module t)) "]<br/><pre>" (escape-html (str (:cmd t))) "</pre></div>")) (:dangerous audit-res2))))
+                    "</div>"
+                    "<div id=\"tab-priv\" class=\"tab-content\">"
+                    (if (empty? (:privilege audit-res2)) "<div class=\"card\"><p>No privilege escalation found.</p></div>"
+                      (str/join "" (map (fn [t] (str "<div class='card priv'><b>" (:name t) "</b> [" (name (:module t)) "]</div>")) (:privilege audit-res2))))
+                    "</div>"
+                    "<div id=\"tab-http\" class=\"tab-content\">"
+                    (if (empty? (:insecure-fetch audit-res2)) "<div class=\"card\"><p>No insecure HTTP fetches found.</p></div>"
+                      (str/join "" (map (fn [t] (str "<div class='card dang'><b>" (:name t) "</b>: " (:url t) "</div>")) (:insecure-fetch audit-res2))))
+                    "</div>"
+                    "<div id=\"tab-repo\" class=\"tab-content\">"
+                    (if (empty? (:repos audit-res2)) "<div class=\"card\"><p>No repositories or includes found.</p></div>"
+                      (str/join "" (map (fn [r] (str "<div class='card repo'>[" (:type r) "] " (:url r) "</div>")) (:repos audit-res2))))
+                    "</div>"
+                    "</div></body></html>")]
+      (io/write-file html-path html)
+      (println (str "\n\033[32m✓ Audit complete.\033[0m Report generated at: \033[36m" html-path "\033[0m")))))
+
 ;; --- npkm-lint: static analysis of a playbook ---
 (defn lint-tasks [tasks playbook-file depth]
   (let [required-module-fields
@@ -2015,6 +2167,7 @@
         (println "  npkm roles install <git-url> install a role from git")
         (println "  npkm vault encrypt <file>    encrypt a file with AES-256")
         (println "  npkm vault decrypt <file>    decrypt a vault-encrypted file")
+        (println "  npkm audit security <play>   security audit of a playbook")
         (println "\nSupported Playbook Modules:")
         (println "  shell, command, file, copy, move, remove, debug, git, get_url,")
         (println "  lineinfile, replace, template, include_tasks, block/rescue/always,")
@@ -2111,6 +2264,12 @@
           (sys-exit 0)))
       (if (= (first pos-args-clean) "doctor")
         (do (npkm-doctor) (sys-exit 0)))
+      (if (= (first pos-args-clean) "audit")
+        (do
+          (if (or (< (count pos-args-clean) 3) (not= (second pos-args-clean) "security"))
+            (do (println "Usage: npkm audit security <playbook>") (sys-exit 1)))
+          (npkm-audit-security (nth pos-args-clean 2))
+          (sys-exit 0)))
       (let [playbook-file (first pos-args-clean)
           is-git? (if playbook-file (or (str/ends-with? playbook-file ".git") (str/starts-with? playbook-file "git://") (str/starts-with? playbook-file "git@") (str/starts-with? playbook-file "ssh://git@")) false)
           is-doc? (some (fn [x] (= x "--doc")) flags)
