@@ -2526,7 +2526,7 @@ function showTab(tabId) {
                     (execute-playbook tasks inventory cfg is-bw content is-debug is-dry-run is-diff)
                     (if is-report (generate-report playbook-file))))))))))))
 
-)
+
 (if (not (some (fn [x] (= x "test")) (sys-os-args)))
   (do
     (run)
