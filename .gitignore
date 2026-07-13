@@ -22,3 +22,7 @@ npkm-coni/build_date.txt
 .venv
 .venv-pptx/
 .venv-pptx
+npkm-bin
+.gitignore
+.gitignore
+npkm-coni/coni
