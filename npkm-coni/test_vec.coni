@@ -1,0 +1,5 @@
+(def s (map (fn [x] (+ x 1)) [1 2 3]))
+(println (vector? s))
+(def v (reduce (fn [acc x] (conj acc x)) [] s))
+(println (vector? v))
+(println v)

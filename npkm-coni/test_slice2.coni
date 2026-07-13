@@ -1,0 +1,18 @@
+(defn slice-plays-by-task-idx [plays start-idx]
+  (if (<= start-idx 0)
+    plays
+    (let [state (atom 0)]
+      (map (fn [play]
+             (let [filtered-tasks (filter (fn [t]
+                                            (let [curr @state]
+                                              (swap! state (fn [x] (+ x 1)))
+                                              (>= curr start-idx)))
+                                          (:tasks play))]
+               (assoc play :tasks filtered-tasks)))
+           plays))))
+
+(def plays [{:name "Play 1" :tasks [{:name "Task 0"} {:name "Task 1"} {:name "Task 2"}]}])
+(def sliced (slice-plays-by-task-idx plays 2))
+(println (vector? sliced))
+(println (vector? (:tasks (first plays))))
+(println (vector? (:tasks (first sliced))))

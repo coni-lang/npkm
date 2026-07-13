@@ -1,0 +1,3 @@
+(try (println (int "6")) (catch e (println "no int")))
+(try (println (sys-to-int "6")) (catch e (println "no sys-to-int")))
+(try (println (>= 7 "6")) (catch e (println "no >=")))
