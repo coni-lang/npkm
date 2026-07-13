@@ -332,6 +332,22 @@ npkm lint smb_share.edn
 
 ---
 
+## Interactive UI Server (`npkm serve`)
+
+Launch a rich, interactive web UI for visualizing, auditing, and executing playbooks.
+
+```bash
+npkm serve 8080 playbook.yml
+```
+
+**Key Features:**
+- **Variables & Placeholders Auditing:** Deeply nested variables are flattened and cross-referenced against your playbook. Missing, defined, and unused variables are clearly badged, with missing variables injected inline to spot unconfigured hosts.
+- **Dynamic Inventory Switching:** Auto-discovers all inventory files in your workspace, allowing you to hot-swap environments via a dropdown without restarting the server.
+- **Historical Run Tracing:** Click on past runs in the History tab to load previous console outputs natively in the UI for rapid debugging.
+- **Security Audit & Architecture Map:** Visualize your playbook flow as an interactive node graph and run security audits to flag dangerous shell tasks.
+
+---
+
 ## Watch Mode (`npkm watch`)
 
 Monitor your playbook and inventory files for changes and re-run automatically — ideal during active role or playbook development:
@@ -651,6 +667,7 @@ Options:
 Commands:
   npkm init [dir]                scaffold a new project
   npkm doctor                    health check and system validation
+  npkm serve <port> <playbook>   launch interactive web UI server
   npkm lint <playbook>           static analysis
   npkm watch <playbook>          re-run on file change
   npkm run history               list past run logs
