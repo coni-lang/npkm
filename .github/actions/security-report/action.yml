@@ -31,8 +31,10 @@ runs:
       shell: bash
       run: |
         sudo apt-get update && sudo apt-get install -y clamav
+        sudo systemctl stop clamav-freshclam || true
         mkdir -p ~/clamav-db
-        sudo freshclam --datadir=$HOME/clamav-db || true
+        sudo chown -R clamav:clamav ~/clamav-db || true
+        sudo freshclam --datadir=$HOME/clamav-db || sudo freshclam || true
 
     - name: Generate Security Reports for Release Notes
       shell: bash
@@ -41,15 +43,15 @@ runs:
         
         echo "### 1. Go Vulnerability Check (govulncheck)" >> ${{ inputs.output_file }}
         echo "\`\`\`" >> ${{ inputs.output_file }}
-        ~/go/bin/govulncheck -mode=binary $(which coni) >> ${{ inputs.output_file }} || true
+        ~/go/bin/govulncheck -mode=binary $(which coni) >> ${{ inputs.output_file }} 2>&1 || true
         echo "\`\`\`" >> ${{ inputs.output_file }}
         
         echo "### 2. Shared Library Dependencies (ldd)" >> ${{ inputs.output_file }}
         echo "\`\`\`" >> ${{ inputs.output_file }}
-        ldd ${{ inputs.binary_path }} >> ${{ inputs.output_file }} || true
+        ldd ${{ inputs.binary_path }} >> ${{ inputs.output_file }} 2>&1 || true
         echo "\`\`\`" >> ${{ inputs.output_file }}
         
         echo "### 3. Antivirus Scan (ClamAV)" >> ${{ inputs.output_file }}
         echo "\`\`\`" >> ${{ inputs.output_file }}
-        clamscan -d $HOME/clamav-db -r ${{ inputs.scan_dir }} >> ${{ inputs.output_file }} || true
+        clamscan -d $HOME/clamav-db -r ${{ inputs.scan_dir }} >> ${{ inputs.output_file }} 2>&1 || true
         echo "\`\`\`" >> ${{ inputs.output_file }}
