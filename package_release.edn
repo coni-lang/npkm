@@ -42,6 +42,9 @@
    :shell {:cmd "CGO_ENABLED=0 GOOS=linux GOARCH=amd64 coni build . -o ../dist/npkm-coni-linux && touch ../dist/npkm-coni-linux"
            :cwd "npkm-coni"}}
 
+  {:name "Run govulncheck"
+   :shell {:cmd "~/go/bin/govulncheck -mode=binary $(which coni) > dist/govulncheck.txt || true"}}
+
   {:name "Update local npkm-coni"
    :shell {:cmd "rm -f npkm-coni/npkm-coni && cp dist/npkm-coni npkm-coni/npkm-coni || true"}}
 
@@ -75,7 +78,7 @@
            :cwd "dist"}}
 
   {:name "Package release zip"
-   :shell {:cmd "zip -r npkm-coni-release-{{ build_date.stdout }}.zip npkm-coni npkm-coni-linux npkm-coni.exe npkm-intellij-plugin-1.0.0.zip README.md CLA.md CODE_OF_CONDUCT.md CONTRIBUTING.md LICENSE README-LICENSING.md TRADEMARKS.md npkm-features.md examples/ test-playbook.edn test-playbook.yml test-loop.yml install_ollama.yml"
+   :shell {:cmd "zip -r npkm-coni-release-{{ build_date.stdout }}.zip npkm-coni npkm-coni-linux npkm-coni.exe npkm-intellij-plugin-1.0.0.zip README.md CLA.md CODE_OF_CONDUCT.md CONTRIBUTING.md LICENSE README-LICENSING.md TRADEMARKS.md npkm-features.md examples/ test-playbook.edn test-playbook.yml test-loop.yml install_ollama.yml govulncheck.txt"
            :cwd "dist"}}
 
   {:name "Deploy to samba share"
@@ -83,7 +86,7 @@
            :cwd "dist"}}
 
   {:name "List Artifacts"
-   :shell {:cmd "ls -lh npkm-coni npkm-coni-linux npkm-coni.exe npkm-coni-release-{{ build_date.stdout }}.zip"
+   :shell {:cmd "ls -lh npkm-coni npkm-coni-linux npkm-coni.exe npkm-coni-release-{{ build_date.stdout }}.zip govulncheck.txt"
            :cwd "dist"}
    :register "artifacts"}
 
