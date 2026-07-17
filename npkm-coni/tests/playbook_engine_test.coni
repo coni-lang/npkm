@@ -25,20 +25,10 @@
     "server1"   "hosts: server1\ntasks:\n  - name: test"
     "localhost" "tasks:\n  - name: test"))
 
-(deftest test-resolve-var-path
-  "Tests the deep property resolution logic used for playbook loop items"
-  (let [runtime-vars {"config" {"services" ["git" "java" "intellij"]}
-                      "flat" "value"}]
-    (are [expected path] (= expected (engine/resolve-var-path runtime-vars path))
-      ["git" "java" "intellij"] "config.services"
-      "value"                   "flat"
-      nil                       "config.missing"
-      nil                       "missing")))
-
 (deftest test-loop-playbook
   "Tests the end-to-end execution of a playbook with loop items"
   (let [bin-path (if (io/exists? "/tmp/coni-compiler") "/tmp/coni-compiler" "coni")
-        res (shell/sh (str "env CONI_LIB=/Users/nico/cool/coni-lang/libs " bin-path " main.coni tests/test-loop.yml"))]
+        res (shell/sh (str "env CONI_LIB=/Users/nico/cool/coni-lang " bin-path " main.coni tests/test-loop.yml"))]
     (is (= 0 (:code res)))
     (are [substr] (= true (str/includes? (:stdout res) substr))
       "Installing git"
@@ -51,8 +41,9 @@
   "Tests the deep variable resolution across group and host vars"
   (let [bin-path (if (io/exists? "/tmp/coni-compiler") "/tmp/coni-compiler" "coni")
         _ (shell/sh "cp doc_data.coni ../examples/demo-deep-vars/")
-        res (shell/sh (str "cd ../examples/demo-deep-vars && env CONI_LIB=/Users/nico/cool/coni-lang/libs " bin-path " ../../npkm-coni/main.coni -i inventories/dev/inventory.yml playbook/deep.yml"))
-        _ (shell/sh "rm ../examples/demo-deep-vars/doc_data.coni")]
+        _ (shell/sh "mkdir -p ../examples/demo-deep-vars/libs/j2/src && cp /Users/nico/cool/coni-lang/libs/j2/src/j2.coni ../examples/demo-deep-vars/libs/j2/src/")
+        res (shell/sh (str "cd ../examples/demo-deep-vars && env CONI_LIB=/Users/nico/cool/coni-lang " bin-path " ../../npkm-coni/main.coni -i inventories/dev/inventory.yml playbook/deep.yml"))
+        _ (shell/sh "rm ../examples/demo-deep-vars/doc_data.coni && rm -rf ../examples/demo-deep-vars/libs/j2")]
     (is (= 0 (:code res)))
     (is (= false (str/includes? (:stdout res) "Error")))
     (is (= true (str/includes? (:stdout res) "Database is 192.168.1.100:5432 and URL is http://10.0.0.1:9090 and Web is 9090")))))

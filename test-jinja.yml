@@ -1,0 +1,28 @@
+- name: Test Jinja2 Upgrades
+  hosts: localhost
+  vars:
+    my_var: "Hello"
+    my_list: ["a", "b", "c"]
+    truthy: true
+  tasks:
+    - name: Upper Filter
+      debug:
+        msg: "Upper: {{ my_var | upper }}"
+    - name: Lower Filter
+      debug:
+        msg: "Lower: {{ my_var | lower }}"
+    - name: Ternary Filter
+      debug:
+        msg: "Ternary: {{ truthy | ternary('yes', 'no') }}"
+    - name: Default Filter
+      debug:
+        msg: "Default: {{ missing | default('fallback') }}"
+    - name: Join Filter
+      debug:
+        msg: "Join: {{ my_list | join('-') }}"
+    - name: Native Coni Filter
+      debug:
+        msg: 'Native Coni Filter: {{ my_var | (fn [x] (str x " World")) }}'
+    - name: Magic OS
+      debug:
+        msg: "Magic OS: {{ npkm_os_family }}"

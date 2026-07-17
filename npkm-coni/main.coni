@@ -8,73 +8,15 @@
 (require "libs/ssh/src/ssh.coni" :as ssh)
 (require "libs/template/src/template.coni" :as tpl)
 (require "libs/vault/src/vault.coni" :as vault)
+(require "libs/j2/src/j2.coni" :as j2)
 (require "doc_data.coni" :as doc)
 
 
 
-(defn resolve-var-path [vars path]
-  (let [parts (str/split path ".")]
-    (loop [rem parts curr vars]
-      (if (empty? rem)
-        curr
-        (if (map? curr)
-          (let [k-str (first rem)
-                k-kw (keyword k-str)
-                val-str (get curr k-str)
-                val-kw (get curr k-kw)]
-            (recur (rest rem) (if val-str val-str val-kw)))
-          nil)))))
-
-(defn apply-filters-to-string [s vars]
-  (let [parts (str/split s "{{")]
-    (if (= (count parts) 1)
-      s
-      (loop [rem (rest parts)
-             acc (first parts)]
-        (if (empty? rem)
-          acc
-          (let [part (first rem)
-                end-idx (str/index-of part "}}")]
-            (if (= end-idx -1)
-              (recur (rest rem) (str acc "{{" part))
-              (let [expr (str/trim (str/slice part 0 end-idx))
-                    rest-str (str/slice part (+ end-idx 2) (count part))
-                    expr-parts (str/split expr "|")
-                    var-name (str/trim (first expr-parts))
-                    filters (rest expr-parts)
-                    base-val (resolve-var-path vars var-name)
-                    final-val (if (and (nil? base-val) (= var-name "item"))
-                                "{{ item }}"
-                                (loop [f-rem filters
-                                       curr-val base-val]
-                                (if (empty? f-rem)
-                                  curr-val
-                                  (let [f (str/trim (first f-rem))]
-
-                                    (if (str/starts-with? f "default(")
-                                      (let [def-val (str/slice f 9 (- (count f) 2))]
-                                        (recur (rest f-rem) (if (or (nil? curr-val) (= curr-val "")) def-val curr-val)))
-                                      (if (str/starts-with? f "join(")
-                                        (let [join-str (str/slice f 6 (- (count f) 2))]
-                                          (recur (rest f-rem) (if (vector? curr-val) (str/join join-str curr-val) curr-val)))
-                                        (recur (rest f-rem) curr-val)))))))]
-                (recur (rest rem) (str acc final-val rest-str))))))))))
-
-(defn apply-filters-recursive [node vars]
-  (if (map? node)
-    (loop [ks (keys node) acc {}]
-      (if (empty? ks) acc
-          (recur (rest ks) (assoc acc (first ks) (apply-filters-recursive (get node (first ks)) vars)))))
-    (if (vector? node)
-      (loop [rem node acc []]
-        (if (empty? rem) acc
-            (recur (rest rem) (conj acc (apply-filters-recursive (first rem) vars)))))
-      (if (string? node)
-        (apply-filters-to-string node vars)
-        node))))
-
 (defn custom-interp [node vars]
-  (apply-filters-recursive (tpl/walk-interp node vars) vars))
+  (let [magic-vars (assoc vars :npkm_os_family (sys-os-name) 
+                               :inventory_hostname (if (:inventory_hostname vars) (:inventory_hostname vars) "localhost"))]
+    (j2/render (tpl/walk-interp node magic-vars) magic-vars)))
 
 ;; --- Global Logger ---
 (def original-println println)
@@ -1460,7 +1402,7 @@
                                           (:with_items mod-args))))))]
                             (if loop-val
                               (if (string? loop-val)
-                                (let [resolved (resolve-var-path runtime-vars loop-val)] 
+                                (let [resolved (j2/resolve-var-path runtime-vars loop-val)] 
                                   (if (vector? resolved) resolved (if resolved [resolved] [])))
                                 (if (vector? loop-val) loop-val [])) nil))
                     is-step (:__step__ runtime-vars)
@@ -1722,7 +1664,7 @@
   (let [plays (if (and (vector? parsed-content) (map? (first parsed-content)) (:tasks (first parsed-content)))
                 parsed-content
                 (let [play-hosts (if yaml-content (extract-hosts yaml-content) (if (map? parsed-content) (:hosts parsed-content "localhost") "localhost"))]
-                   [{:name "Default Play" :hosts play-hosts :tasks (if (map? parsed-content) (:tasks parsed-content) parsed-content) :handlers (if (map? parsed-content) (:handlers parsed-content) nil)}]))]
+                   [{:name "Default Play" :hosts play-hosts :tasks (if (map? parsed-content) (:tasks parsed-content) parsed-content) :handlers (if (map? parsed-content) (:handlers parsed-content) nil) :vars (if (map? parsed-content) (:vars parsed-content) {})}]))]
     (loop [rem-plays plays
            play-vars global-vars]
       (if (empty? rem-plays)
