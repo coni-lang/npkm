@@ -578,6 +578,105 @@
         (throw (str "TEST FAILED: expected output to contain '" contains-str "' but got '" actual "'")))
       (str "TEST PASSED" (if actual (str ": " actual) "")))))
 
+(defrecord WaitForTask [spec]
+  PlaybookTask
+  (execute [this]
+    (let [s (:spec this)
+          host (if (:host s) (:host s) "127.0.0.1")
+          port (:port s)
+          delay (if (:delay s) (sys-parse-float (str (:delay s))) 0)
+          timeout (if (:timeout s) (sys-parse-float (str (:timeout s))) 300)
+          conn (:__connection__ s)
+          check-cmd (str "nc -z " host " " port)
+          start-time (/ (sys-time-now) 1000000)]
+      (if (> delay 0) (sleep (* delay 1000)))
+      (loop []
+        (let [res (if conn (sys-ssh-exec (assoc conn :debug true) check-cmd) (shell/sh check-cmd))
+              now (/ (sys-time-now) 1000000)
+              elapsed (- now start-time)]
+          (if (= (:code res) 0)
+            nil
+            (if (> elapsed timeout)
+              (throw (str "Timeout waiting for " host ":" port " after " timeout " seconds"))
+              (do
+                (sleep 1000)
+                (recur)))))))))
+
+(defrecord DockerContainerTask [spec]
+  PlaybookTask
+  (execute [this]
+    (let [s (:spec this)
+          name (:name s)
+          image (:image s)
+          state (if (:state s) (:state s) "started")
+          conn (:__connection__ s)
+          sudo (if (:become s) "sudo " "")
+          cmd (if (= state "started")
+                (str sudo "docker run -d --name " name " " image)
+                (if (= state "stopped")
+                  (str sudo "docker stop " name)
+                  (if (= state "absent")
+                    (str sudo "docker rm -f " name)
+                    (throw (str "Unknown state: " state)))))]
+      (let [res (if conn (sys-ssh-exec (assoc conn :debug true) cmd) (shell/sh cmd))]
+        (if (= (:code res) 0)
+          nil
+          (throw (str "Docker container " state " failed: " (:stderr res))))))))
+
+(defrecord DockerImageTask [spec]
+  PlaybookTask
+  (execute [this]
+    (let [s (:spec this)
+          name (:name s)
+          source (if (:source s) (:source s) "pull")
+          conn (:__connection__ s)
+          sudo (if (:become s) "sudo " "")
+          cmd (if (= source "pull")
+                (str sudo "docker pull " name)
+                (if (= source "build")
+                  (str sudo "docker build -t " name " " (if (:build_path s) (:build_path s) "."))
+                  (throw (str "Unknown source: " source))))]
+      (let [res (if conn (sys-ssh-exec (assoc conn :debug true) cmd) (shell/sh cmd))]
+        (if (= (:code res) 0)
+          nil
+          (throw (str "Docker image " source " failed: " (:stderr res))))))))
+
+(defrecord UriTask [spec]
+  PlaybookTask
+  (execute [this]
+    (let [s (:spec this)
+          url (:url s)
+          method (if (:method s) (:method s) "GET")
+          headers (if (:headers s) (:headers s) {})
+          body (if (:body s) (if (map? (:body s)) (sys-json-stringify (:body s)) (str (:body s))) "")
+          res (try (sys-http-request method url headers body) (catch e (str e)))]
+      (if (and (string? res) (str/starts-with? res "http request failed"))
+        (throw (str "HTTP " method " " url " failed: " res))
+        (do
+          (if (:dest s) (sys-file-write (:dest s) (str res)))
+          (sys-json-stringify {:body (str res)}))))))
+
+(defrecord HtpasswdTask [spec]
+  PlaybookTask
+  (execute [this]
+    (let [s (:spec this)
+          path (:path s)
+          name (:name s)
+          password (:password s)
+          state (if (:state s) (:state s) "present")
+          conn (:__connection__ s)
+          cmd-check (if conn (sys-ssh-exec (assoc conn :debug true) (str "test -f " path)) (shell/sh (str "test -f " path)))
+          file-exists (= (:code cmd-check) 0)
+          cmd (if (= state "present")
+                (if file-exists
+                  (str "htpasswd -b " path " " name " " password)
+                  (str "htpasswd -cb " path " " name " " password))
+                (str "htpasswd -D " path " " name))]
+      (let [res (if conn (sys-ssh-exec (assoc conn :debug true) cmd) (shell/sh cmd))]
+        (if (= (:code res) 0)
+          nil
+          (throw (str "htpasswd " state " failed: " (:stderr res))))))))
+
 (defrecord TemplateTask [spec]
   PlaybookTask
   (execute [this]
@@ -780,6 +879,12 @@
    :powershell PowershellTask
    :set_fact SetFactTask
    :test TestTask
+   :wait_for WaitForTask
+   :wait_for_connection WaitForTask
+   :docker_container DockerContainerTask
+   :docker_image DockerImageTask
+   :uri UriTask
+   :htpasswd HtpasswdTask
    :apt (fn [s] (PackageTask (assoc s :manager "apt-get")))
    :yum (fn [s] (PackageTask (assoc s :manager "yum")))
    :brew (fn [s] (PackageTask (assoc s :manager "brew")))

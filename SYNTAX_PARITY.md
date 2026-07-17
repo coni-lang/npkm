@@ -85,9 +85,11 @@ NPKM implements a robust list of core Ansible modules directly in native Coni. T
 - **System**: `command`, `shell`, `powershell`, `win_shell`, `coni` (run native Coni scripts!)
 - **Files & Directories**: `file`, `copy`, `template`, `remove`, `move`, `stat`, `path`
 - **File Contents**: `lineinfile`, `replace`
-- **Network & Source Control**: `get_url`, `git`
-- **Packaging & Archives**: `package`, `unzip`, `archive`
+- **Network & Source Control**: `get_url`, `uri`, `htpasswd`, `wait_for`, `wait_for_connection`, `git`
+- **Packaging & Archives**: `package`, `apt`, `yum`, `brew`, `unzip`, `archive`
 - **System Configuration**: `systemd`, `service`, `cron`, `user`
+- **Containers**: `docker_container`, `docker_image`
+- **Variables**: `set_fact`
 - **Debugging & Control**: `debug`, `fail`
 
 ### Module Syntax Example
@@ -117,9 +119,8 @@ NPKM implements a robust list of core Ansible modules directly in native Coni. T
 ```
 
 ### Recommended Future Modules (Roadmap)
-To achieve even higher parity with enterprise Ansible deployments, we recommend adding support for:
-1. **`apt` / `yum` / `brew` explicit aliases** (Currently handled dynamically by the `package` module, but explicit modules improve backwards compatibility).
-2. **`wait_for` / `wait_for_connection`** (Crucial for deployments involving reboots or waiting for application ports to open).
-3. **`docker_container` / `docker_image`** (Highly requested for containerized deployments).
-4. **`uri` / `htpasswd`** (Expanding upon `get_url` to handle complex API interactions or basic auth setups).
-5. **`set_fact`** (To dynamically store computed Coni values during the playbook run).
+To achieve even higher parity with enterprise Ansible deployments, we are continuously expanding our module list. We've successfully integrated `apt`, `yum`, `brew`, `wait_for`, `docker_container`, `uri`, and `set_fact`. 
+
+Next on the roadmap:
+1. **`k8s`** (Native Kubernetes cluster management).
+2. **`terraform`** (For infrastructure-as-code orchestration).
