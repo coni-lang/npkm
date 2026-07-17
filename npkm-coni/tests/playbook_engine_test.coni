@@ -27,8 +27,8 @@
 
 (deftest test-loop-playbook
   "Tests the end-to-end execution of a playbook with loop items"
-  (let [bin-path (if (io/exists? "/tmp/coni-compiler") "/tmp/coni-compiler" "coni")
-        res (shell/sh (str "env CONI_LIB=/Users/nico/cool/coni-lang " bin-path " main.coni tests/test-loop.yml"))]
+  (let [bin-path (if (io/exists? "npkm-coni") "./npkm-coni" "coni main.coni")
+        res (shell/sh (str bin-path " tests/test-loop.yml"))]
     (is (= 0 (:code res)))
     (are [substr] (= true (str/includes? (:stdout res) substr))
       "Installing git"
@@ -39,11 +39,8 @@
 
 (deftest test-deep-vars-playbook
   "Tests the deep variable resolution across group and host vars"
-  (let [bin-path (if (io/exists? "/tmp/coni-compiler") "/tmp/coni-compiler" "coni")
-        _ (shell/sh "cp doc_data.coni ../examples/demo-deep-vars/")
-        _ (shell/sh "mkdir -p ../examples/demo-deep-vars/libs/j2/src && cp /Users/nico/cool/coni-lang/libs/j2/src/j2.coni ../examples/demo-deep-vars/libs/j2/src/")
-        res (shell/sh (str "cd ../examples/demo-deep-vars && env CONI_LIB=/Users/nico/cool/coni-lang " bin-path " ../../npkm-coni/main.coni -i inventories/dev/inventory.yml playbook/deep.yml"))
-        _ (shell/sh "rm ../examples/demo-deep-vars/doc_data.coni && rm -rf ../examples/demo-deep-vars/libs/j2")]
+  (let [bin-path (if (io/exists? "npkm-coni") "../../npkm-coni/npkm-coni" "coni ../../npkm-coni/main.coni")
+        res (shell/sh (str "cd ../examples/demo-deep-vars && " bin-path " -i inventories/dev/inventory.yml playbook/deep.yml"))]
     (is (= 0 (:code res)))
     (is (= false (str/includes? (:stdout res) "Error")))
     (is (= true (str/includes? (:stdout res) "Database is 192.168.1.100:5432 and URL is http://10.0.0.1:9090 and Web is 9090")))))
