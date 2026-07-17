@@ -1,0 +1,55 @@
+name: "Security Report Generator"
+description: "Generates a markdown security report containing govulncheck, ldd, and clamav scans."
+inputs:
+  binary_path:
+    description: "Path to the compiled Linux binary to run ldd against"
+    required: true
+  scan_dir:
+    description: "Directory to scan with ClamAV"
+    required: true
+  output_file:
+    description: "Path to the output markdown file"
+    required: true
+    default: "release_notes.md"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install govulncheck
+      shell: bash
+      run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+    - name: Cache ClamAV Database
+      uses: actions/cache@v4
+      with:
+        path: ~/clamav-db
+        key: clamav-db-${{ runner.os }}-${{ github.run_id }}
+        restore-keys: |
+          clamav-db-${{ runner.os }}-
+
+    - name: Install ClamAV
+      shell: bash
+      run: |
+        sudo apt-get update && sudo apt-get install -y clamav
+        mkdir -p ~/clamav-db
+        sudo freshclam --datadir=$HOME/clamav-db || true
+
+    - name: Generate Security Reports for Release Notes
+      shell: bash
+      run: |
+        echo "## Security Audit & Guarantees" > ${{ inputs.output_file }}
+        
+        echo "### 1. Go Vulnerability Check (govulncheck)" >> ${{ inputs.output_file }}
+        echo "\`\`\`" >> ${{ inputs.output_file }}
+        ~/go/bin/govulncheck -mode=binary $(which coni) >> ${{ inputs.output_file }} || true
+        echo "\`\`\`" >> ${{ inputs.output_file }}
+        
+        echo "### 2. Shared Library Dependencies (ldd)" >> ${{ inputs.output_file }}
+        echo "\`\`\`" >> ${{ inputs.output_file }}
+        ldd ${{ inputs.binary_path }} >> ${{ inputs.output_file }} || true
+        echo "\`\`\`" >> ${{ inputs.output_file }}
+        
+        echo "### 3. Antivirus Scan (ClamAV)" >> ${{ inputs.output_file }}
+        echo "\`\`\`" >> ${{ inputs.output_file }}
+        clamscan -d $HOME/clamav-db -r ${{ inputs.scan_dir }} >> ${{ inputs.output_file }} || true
+        echo "\`\`\`" >> ${{ inputs.output_file }}
