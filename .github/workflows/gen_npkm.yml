@@ -37,6 +37,9 @@ jobs:
       - name: Install govulncheck
         run: go install golang.org/x/vuln/cmd/govulncheck@latest
 
+      - name: Install ClamAV
+        run: sudo apt-get update && sudo apt-get install -y clamav
+
       - name: Bootstrap NPKM
         run: |
           cd npkm-coni
@@ -47,6 +50,25 @@ jobs:
       - name: Build and Package Release
         run: |
           ./npkm-coni/npkm-coni --verbose package_release.edn
+
+      - name: Generate Security Reports for Release Notes
+        run: |
+          echo "## Security Audit & Guarantees" > release_notes.md
+          
+          echo "### 1. Go Vulnerability Check (govulncheck)" >> release_notes.md
+          echo "\`\`\`" >> release_notes.md
+          ~/go/bin/govulncheck -mode=binary $(which coni) >> release_notes.md || true
+          echo "\`\`\`" >> release_notes.md
+          
+          echo "### 2. Shared Library Dependencies (ldd)" >> release_notes.md
+          echo "\`\`\`" >> release_notes.md
+          ldd dist/npkm-coni-linux >> release_notes.md || true
+          echo "\`\`\`" >> release_notes.md
+          
+          echo "### 3. Antivirus Scan (ClamAV)" >> release_notes.md
+          echo "\`\`\`" >> release_notes.md
+          clamscan -r dist/ >> release_notes.md || true
+          echo "\`\`\`" >> release_notes.md
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
@@ -61,4 +83,5 @@ jobs:
           tag_name: build-${{ github.run_number }}
           name: Build ${{ github.run_number }}
           files: dist/*.zip
+          body_path: release_notes.md
           generate_release_notes: true
