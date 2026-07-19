@@ -34,7 +34,8 @@ runs:
         sudo systemctl stop clamav-freshclam || true
         mkdir -p ~/clamav-db
         sudo chown -R clamav:clamav ~/clamav-db || true
-        sudo freshclam --datadir=$HOME/clamav-db || sudo freshclam || true
+        sudo freshclam --datadir=$HOME/clamav-db || true
+        sudo chown -R $USER:$USER ~/clamav-db || true
 
     - name: Generate Security Reports for Release Notes
       shell: bash
@@ -42,16 +43,26 @@ runs:
         echo "## Security Audit & Guarantees" > ${{ inputs.output_file }}
         
         echo "### 1. Go Vulnerability Check (govulncheck)" >> ${{ inputs.output_file }}
-        echo "\`\`\`" >> ${{ inputs.output_file }}
+        echo '```' >> ${{ inputs.output_file }}
         ~/go/bin/govulncheck -mode=binary $(which coni) >> ${{ inputs.output_file }} 2>&1 || true
-        echo "\`\`\`" >> ${{ inputs.output_file }}
+        echo '```' >> ${{ inputs.output_file }}
         
         echo "### 2. Shared Library Dependencies (ldd)" >> ${{ inputs.output_file }}
-        echo "\`\`\`" >> ${{ inputs.output_file }}
-        ldd ${{ inputs.binary_path }} >> ${{ inputs.output_file }} 2>&1 || true
-        echo "\`\`\`" >> ${{ inputs.output_file }}
+        echo '```' >> ${{ inputs.output_file }}
+        LDD_OUT=$(ldd ${{ inputs.binary_path }} 2>&1 || true)
+        if echo "$LDD_OUT" | grep -q "not a dynamic executable"; then
+            echo "Statically linked (not a dynamic executable)" >> ${{ inputs.output_file }}
+        else
+            echo "$LDD_OUT" >> ${{ inputs.output_file }}
+        fi
+        echo '```' >> ${{ inputs.output_file }}
         
         echo "### 3. Antivirus Scan (ClamAV)" >> ${{ inputs.output_file }}
-        echo "\`\`\`" >> ${{ inputs.output_file }}
-        clamscan -d $HOME/clamav-db -r ${{ inputs.scan_dir }} >> ${{ inputs.output_file }} 2>&1 || true
-        echo "\`\`\`" >> ${{ inputs.output_file }}
+        echo '```' >> ${{ inputs.output_file }}
+        if [ -z "$(ls -A $HOME/clamav-db 2>/dev/null)" ]; then
+            echo "ClamAV database not available (possibly due to rate limits or missing cache)." >> ${{ inputs.output_file }}
+        else
+            clamscan -d $HOME/clamav-db -r ${{ inputs.scan_dir }} >> ${{ inputs.output_file }} 2>&1 || true
+        fi
+        echo '```' >> ${{ inputs.output_file }}
+
