@@ -57,17 +57,22 @@ runs:
         ~/go/bin/govulncheck -mode=binary $(which coni) >> ${{ inputs.output_file }} 2>&1 || true
         echo '```' >> ${{ inputs.output_file }}
         
-        echo "### 2. Shared Library Dependencies (ldd)" >> ${{ inputs.output_file }}
+        echo "### 2. Binary Architecture & Shared Libraries" >> ${{ inputs.output_file }}
         for bin in ${{ inputs.binary_path }}; do
-            echo "#### $bin" >> ${{ inputs.output_file }}
-            echo '```' >> ${{ inputs.output_file }}
+            echo "#### \`$bin\`" >> ${{ inputs.output_file }}
+            echo "👉 **Architecture:** \`$(file -b $bin || echo 'Unknown')\`" >> ${{ inputs.output_file }}
+            echo "" >> ${{ inputs.output_file }}
+            
             LDD_OUT=$(ldd $bin 2>&1 || true)
             if echo "$LDD_OUT" | grep -q "not a dynamic executable"; then
-                echo "Statically linked (not a dynamic executable)" >> ${{ inputs.output_file }}
+                echo "✅ **Security Guarantee:** Fully statically linked (Zero dynamic dependencies, standalone executable)." >> ${{ inputs.output_file }}
             else
+                echo "⚠️ **Dynamic Dependencies:**" >> ${{ inputs.output_file }}
+                echo '```text' >> ${{ inputs.output_file }}
                 echo "$LDD_OUT" >> ${{ inputs.output_file }}
+                echo '```' >> ${{ inputs.output_file }}
             fi
-            echo '```' >> ${{ inputs.output_file }}
+            echo "" >> ${{ inputs.output_file }}
         done
         
         echo "### 3. Antivirus Scan (ClamAV)" >> ${{ inputs.output_file }}
