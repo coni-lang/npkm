@@ -53,9 +53,13 @@ runs:
         echo "## Security Audit & Guarantees" > ${{ inputs.output_file }}
         
         echo "### 1. Go Vulnerability Check (govulncheck)" >> ${{ inputs.output_file }}
-        echo '```' >> ${{ inputs.output_file }}
-        ~/go/bin/govulncheck -mode=binary $(which coni) >> ${{ inputs.output_file }} 2>&1 || true
-        echo '```' >> ${{ inputs.output_file }}
+        for bin in ${{ inputs.binary_path }}; do
+            echo "#### \`$bin\`" >> ${{ inputs.output_file }}
+            echo '```text' >> ${{ inputs.output_file }}
+            ~/go/bin/govulncheck -mode=binary $bin >> ${{ inputs.output_file }} 2>&1 || true
+            echo '```' >> ${{ inputs.output_file }}
+            echo "" >> ${{ inputs.output_file }}
+        done
         
         echo "### 2. Binary Architecture & Shared Libraries" >> ${{ inputs.output_file }}
         for bin in ${{ inputs.binary_path }}; do
